@@ -63,9 +63,28 @@ s = s2
 # panel: two modules exist for this handset
 s = re.sub(r'compatible = "k16a_[0-9a_]+[a-z]*_vdo,lcm";',
            f'compatible = "{panel}";', s, count=1)
+
+# Trim the command line.  The author ships loglevel=8 + ignore_loglevel +
+# drm.debug=0x1e, which emit about 1.4 MB per boot; console output is synchronous
+# so at 115200 baud that is roughly two minutes spent blocked on the UART
+# (measured: 1.01 s to a shell after trimming, ~125 s before).  Everything
+# functional is deliberately left in place - the *_ignore_unused options and the
+# initcall blacklist work around a board whose PMIC has no driver yet.
+BOOTARGS = (
+    "earlycon=mtk8250,0x11002000 console=evenring console=ttyS0,921600n8 "
+    "console=tty0 loglevel=4 printk.devkmsg=on clk_ignore_unused "
+    "pd_ignore_unused regulator_ignore_unused panic=10 softlockup_panic=1 "
+    "watchdog_thresh=5 initcall_blacklist=exynos4_pm_init_power_domain "
+    "fbcon=nodefer cma=256M"
+)
+s, n = re.subn(r'bootargs = "[^"]*";', f'bootargs = "{BOOTARGS}";', s)
+if n != 1:
+    raise SystemExit(f"expected 1 bootargs node, replaced {n}")
+
 open(dts, "w").write(s)
-print(f"  memory -> {cells}")
-print(f"  panel  -> {panel}")
+print(f"  memory   -> {cells}")
+print(f"  panel    -> {panel}")
+print(f"  bootargs -> loglevel=4, no drm.debug, no ignore_loglevel")
 PY
 
 say "build dtb + kernel"
@@ -127,7 +146,9 @@ echo "=========================================================="
 echo "   $(cat /etc/os-release 2>/dev/null | sed -n 's/^PRETTY_NAME=//p' | tr -d '\"') on evergo"
 echo "   $(uname -srm)"
 echo "=========================================================="
+echo "BOOT_TO_SHELL_UPTIME: $(cut -d' ' -f1 /proc/uptime)"
 head -3 /proc/meminfo
+echo "dmesg lines: $(dmesg 2>/dev/null | wc -l)"
 echo "rootfs: $(grep ' / ' /proc/mounts | head -1)"
 echo ""
 exec /bin/sh
