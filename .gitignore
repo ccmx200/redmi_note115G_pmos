@@ -1,0 +1,8 @@
+out/
+work/
+*.img
+*.img.gz
+!config/*.bin
+*.o
+*.cpio
+.DS_Store

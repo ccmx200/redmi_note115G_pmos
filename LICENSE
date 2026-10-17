@@ -1,0 +1,17 @@
+This project packages the mainline Linux kernel for the Redmi Note 11T 5G
+(Xiaomi evergo, MediaTek MT6833) and builds a small userspace around it.
+
+License: GPL-2.0
+
+The kernel it builds is Linux, which is GPL-2.0, and the build scripts and
+packaging code here follow the same license so the result stays consistent with
+the kernel they produce.
+
+Full text: https://www.gnu.org/licenses/old-licenses/gpl-2.0.txt
+
+Upstream kernel work: https://github.com/KevinLmK0702/linux-evergo (GPL-2.0)
+Alpine Linux userland: https://alpinelinux.org (MIT and others)
+
+The vendor device-tree blobs under config/ are extracted from the handset's own
+firmware purely so the bootloader accepts the image; they are not covered by the
+GPL and are not redistributed as source.
