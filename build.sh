@@ -17,7 +17,11 @@ ROOTFS_MB="${ROOTFS_MB:-1536}"
 ALPINE_BRANCH="${ALPINE_BRANCH:-latest-stable}"
 DISTRO="${DISTRO:-alpine}"
 
-HERE="$(cd "$(dirname "$0")/.." && pwd)"
+# build.sh lives at the repository root, so the script's own directory is the
+# root.  Adding "/.." here (as if it lived in scripts/) puts every output one
+# level above the checkout, which is how CI managed to fail with
+#   cp: cannot stat '.../redmi_note115G_pmos/config/author.config'
+HERE="$(cd "$(dirname "$0")" && pwd)"
 OUT="$HERE/out"
 SRC="$OUT/src"
 WORK="$OUT/work"
