@@ -223,8 +223,10 @@ mount -t sysfs    none /sys  2>/dev/null
 mount -t devtmpfs none /dev  2>/dev/null
 mkdir -p /newroot /tmp /run
 
-# nothing else feeds the watchdog once the bootloader has armed it
-[ -e /dev/watchdog ] && ( while : ; do echo 1 > /dev/watchdog 2>/dev/null; sleep 8; done ) &
+# nothing else feeds the watchdog once the bootloader has armed it.  Hold the
+# descriptor open like the rootfs wdtfeed does: `echo > /dev/watchdog` in a loop
+# closes the device every tick and the core logs "did not stop!" at CRIT level.
+[ -e /dev/watchdog ] && ( exec 3>/dev/watchdog; while : ; do echo . >&3; sleep 8; done ) &
 
 i=0; while [ $i -lt 40 ]; do [ -c /dev/ttyGS0 ] && break; sleep 0.25; i=$((i+1)); done
 if [ -c /dev/ttyGS0 ]; then exec >/dev/ttyGS0 2>&1 </dev/ttyGS0
