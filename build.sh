@@ -159,8 +159,22 @@ exec /bin/sh
 INIT
 chmod 755 "$R/bin/evergo-init"
 
-printf '#!/bin/sh\nwhile true; do echo 1 > /dev/watchdog 2>/dev/null; sleep 8; done\n' \
-    > "$R/bin/wdtfeed"
+# Feed the hardware watchdog without spamming the log.
+#
+# `echo 1 > /dev/watchdog` opens and closes the device on every tick, and because
+# the magic 'V' byte is never written the watchdog core logs
+#   watchdog0: watchdog did not stop!
+# at CRIT level and re-arms the timer - once every 8 seconds, forever.  Holding the
+# descriptor open and writing a byte on demand keeps the timer fed and the log
+# quiet.  Measured on the handset: the message count stops growing entirely.
+cat > "$R/bin/wdtfeed" <<'WDTFEED'
+#!/bin/sh
+exec 3>/dev/watchdog || exit 1
+while true; do
+    echo . >&3
+    sleep 8
+done
+WDTFEED
 chmod 755 "$R/bin/wdtfeed"
 
 cat > "$R/etc/fstab" <<'FSTAB'
@@ -188,6 +202,18 @@ chmod 755 "$IR/bin/busybox"
 for a in sh mount umount cat gzip losetup switch_root sleep echo ls blockdev mkdir ln sync; do
     ln -sf busybox "$IR/bin/$a"
 done
+
+# The kernel opens /dev/console before exec'ing init.  With an initramfs present
+# prepare_namespace() never runs, so CONFIG_DEVTMPFS_MOUNT has no effect and
+# devtmpfs is not mounted yet - the node has to be inside the archive, or the
+# kernel prints "Warning: unable to open an initial console".  gen_initramfs.sh
+# emits "nod" entries for real character devices, so create them here.
+if [ "$(id -u)" = 0 ]; then
+    mknod "$IR/dev/console" c 5 1 && chmod 600 "$IR/dev/console"
+    mknod "$IR/dev/null"    c 1 3 && chmod 666 "$IR/dev/null"
+else
+    echo "  (not root: skipping device nodes, the console warning will appear)"
+fi
 
 cat > "$IR/init" <<'INSTALLER'
 #!/bin/sh
