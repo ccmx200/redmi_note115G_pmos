@@ -52,6 +52,18 @@ fi
 export ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
 command -v ccache >/dev/null && export CC="ccache aarch64-linux-gnu-gcc"
 
+# Some steps (mounting the f2fs image, chroot) need root.  Locally the build usually
+# runs as root; in CI it is invoked under sudo.  If neither, re-exec through sudo so a
+# plain `./build.sh` still works for an unprivileged user.
+EVERGO_SUDO=""
+if [ "$(id -u)" != "0" ]; then
+    if command -v sudo >/dev/null 2>&1; then
+        exec sudo -E env "PATH=$PATH" "HOME=$HOME" "$0" "$@"
+    fi
+    echo "this build mounts a filesystem and needs root (or sudo)" >&2
+    exit 1
+fi
+
 say() { printf '\n\033[1;36m== %s\033[0m\n' "$*"; }
 
 # --------------------------------------------------------------- kernel -----

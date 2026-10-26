@@ -30,6 +30,9 @@ env:
   RAM_GIB: ${{ github.event.inputs.ram_gib || '6' }}
   PANEL: ${{ github.event.inputs.panel || 'k16a_36_02_0a_vdo,lcm' }}
   ROOTFS_MB: ${{ github.event.inputs.rootfs_mb || '6144' }}
+  # keep ccache inside the workspace so it is root-owned and cacheable regardless of
+  # which user the build ends up running as
+  CCACHE_DIR: ${{ github.workspace }}/.ccache
 
 # publishing a release needs write access; new repositories default to read-only
 permissions:
@@ -59,23 +62,38 @@ jobs:
           mkfs.f2fs -V 2>&1 | head -1
           qemu-aarch64-static --version | head -1
 
+      - name: prepare loop devices and f2fs
+        # assembling the rootfs means mkfs.f2fs on a file and mounting it, which needs
+        # the loop driver and root.  Without this the build dies at
+        #   mount: failed to setup loop device
+        run: |
+          sudo modprobe loop || true
+          sudo modprobe f2fs || true
+          grep -E 'loop|f2fs' /proc/filesystems || true
+          ls -l /dev/loop* 2>/dev/null | head -5 || true
+          for i in $(seq 0 7); do sudo mknod -m 660 /dev/loop$i b 7 $i 2>/dev/null || true; done
+          sudo chown root:disk /dev/loop* 2>/dev/null || true
+          sudo chmod 660 /dev/loop* 2>/dev/null || true
+          sudo losetup -f || true
+
       - name: restore ccache
         uses: actions/cache@v4
         with:
-          path: ~/.cache/ccache
+          path: ${{ github.workspace }}/.ccache
           key: evergo-ccache-${{ github.run_id }}
           restore-keys: evergo-ccache-
 
       - name: build
+        # the build script mounts the f2fs image and chroots into it, so it must run as
+        # root; HOME is kept so the aarch64 toolchain and ccache resolve normally
         run: |
           chmod +x build.sh
-          ./build.sh
-        env:
-          CCACHE_DIR: ~/.cache/ccache
+          sudo -E env "PATH=$PATH" "HOME=$HOME" "CCACHE_DIR=$CCACHE_DIR" \
+            "RAM_GIB=$RAM_GIB" "PANEL=$PANEL" "ROOTFS_MB=$ROOTFS_MB" ./build.sh
 
       - name: ccache stats
         if: always()
-        run: ccache -s || true
+        run: ccache -s || sudo ccache -s || true
 
       - name: report artifacts
         run: |
@@ -83,8 +101,7 @@ jobs:
           echo "--- boot.img header ---"
           od -A d -t x1 -N 48 out/boot.img
           echo "--- userdata: is it f2fs? ---"
-          file out/userdata.img || true
-          dumpe2fs -h out/userdata.img 2>/dev/null | head -3 || true
+          od -A d -t x1 -j 1024 -N 4 out/userdata.img
           echo "--- checksums ---"
           sha256sum out/boot.img out/userdata.img.gz out/userdata.simg > out/SHA256SUMS || true
           cat out/SHA256SUMS || true
