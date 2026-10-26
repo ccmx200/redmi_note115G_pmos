@@ -151,6 +151,16 @@ print(f"  usb      -> high-speed")
 print(f"  bootargs -> loglevel=4, watchdog_thresh=30, no softlockup_panic")
 PY
 
+# upstream's main port commit is missing this header, so dtbs would fail with
+#   fatal error: dt-bindings/pinctrl/mediatek,mt6833-pinfunc.h: No such file
+# install the vendored copy if the tree does not have it
+PINHDR="$L/include/dt-bindings/pinctrl/mediatek,mt6833-pinfunc.h"
+if [ ! -f "$PINHDR" ] && [ -f "$HERE/config/pinctrl/mediatek,mt6833-pinfunc.h" ]; then
+    mkdir -p "$(dirname "$PINHDR")"
+    cp "$HERE/config/pinctrl/mediatek,mt6833-pinfunc.h" "$PINHDR"
+    echo "  installed the missing mt6833-pinfunc.h from config/pinctrl"
+fi
+
 say "build dtb + kernel"
 cd "$L"
 make -s $KMAKE olddefconfig
