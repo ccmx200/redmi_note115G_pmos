@@ -1,84 +1,131 @@
 #!/usr/bin/env bash
-# Build the evergo (Redmi Note 11T 5G / MT6833) Linux boot + rootfs images.
+# Build the evergo (Redmi Note 11T 5G / MT6833) images - Arch Linux ARM variant.
 #
 # Produces, in out/:
-#   boot.img       kernel + initramfs installer (auto-installs on first boot)
-#   userdata.img   prebuilt ext4 rootfs for the userdata partition
+#   boot.img            kernel + minimal initramfs (switch_root only)
+#   userdata.img.gz     Arch Linux ARM on f2fs, 6 GiB
+#   userdata.simg       the same filesystem in Android sparse format (for fastboot -S)
 #
-# Everything here was established by bring-up on real hardware; the comments note
-# why each step exists because several of them are not obvious.
+# This replaced an earlier Alpine/ext4 build.  What changed and why:
+#   * rootfs     Alpine -> Arch Linux ARM, ext4 -> f2fs (what the phone's userdata is
+#                meant to hold; mounted through a loop at a fixed offset)
+#   * initramfs  no longer carries an installer: it mounts the existing filesystem and
+#                hands over, so a reflash of boot.img alone keeps the system
+#   * USB        g_serial (serial console) -> g_ether (RNDIS only).  There is no COM
+#                port at all now; the phone is reached over the network
+#   * USB speed  full-speed -> high-speed.  The author pinned full-speed because of
+#                BABBLE with the configfs composite gadget; with the simpler legacy
+#                g_ether path high-speed is stable and measured ~5x faster
+#   * login      fastfetch welcome, first-login wizard (user/hostname/password),
+#                password-only SSH
+#
+# Everything except the kernel is reproducible offline; the kernel build needs the
+# cross toolchain and ccache.
 set -euo pipefail
 
 KERNEL_REPO="${KERNEL_REPO:-https://github.com/ccmx200/linux-evergo.git}"
 KERNEL_BRANCH="${KERNEL_BRANCH:-bringup/evergo-mainline}"
-RAM_GIB="${RAM_GIB:-6}"                  # this handset is 6 GiB; 4/8 GiB units exist
+KERNEL_SRC="${KERNEL_SRC:-}"             # reuse an existing checkout if set
+RAM_GIB="${RAM_GIB:-6}"                  # 4/6/8 GiB units exist
 PANEL="${PANEL:-k16a_36_02_0a_vdo,lcm}"  # Tianma; CSOT is k16a_42_02_0b_vdo,lcm
-ROOTFS_MB="${ROOTFS_MB:-1536}"
-ALPINE_BRANCH="${ALPINE_BRANCH:-latest-stable}"
-DISTRO="${DISTRO:-alpine}"
+ROOTFS_MB="${ROOTFS_MB:-6144}"           # 6 GiB f2fs
+ARCH_TARBALL="${ARCH_TARBALL:-}"         # reuse a downloaded Arch ARM rootfs tarball
+MIRROR_HOST="${MIRROR_HOST:-mirrors.tuna.tsinghua.edu.cn}"
+USERDATA_OFF=$((0x304000000))            # 12952010752
 
-# build.sh lives at the repository root, so the script's own directory is the
-# root.  Adding "/.." here (as if it lived in scripts/) puts every output one
-# level above the checkout, which is how CI managed to fail with
-#   cp: cannot stat '.../redmi_note115G_pmos/config/author.config'
 HERE="$(cd "$(dirname "$0")" && pwd)"
-OUT="$HERE/out"
-SRC="$OUT/src"
-WORK="$OUT/work"
+OUT="$HERE/out"; SRC="$OUT/src"; WORK="$OUT/work"
 mkdir -p "$OUT" "$SRC" "$WORK"
 
-export ARCH=arm64
-export CROSS_COMPILE=aarch64-linux-gnu-
+# An interrupted run can leave bind mounts under work/rootfs.  Unmount them before
+# anything removes that tree: `rm -rf` would otherwise walk into the host's /sys and
+# /dev and destroy device nodes.
+if [ -d "$WORK/rootfs" ]; then
+    for m in $(awk -v m="$WORK/rootfs" '$5 ~ m {print $5}' /proc/self/mountinfo 2>/dev/null | sort -r); do
+        umount "$m" 2>/dev/null || umount -l "$m" 2>/dev/null || true
+    done
+    sleep 1
+fi
+
+export ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
 command -v ccache >/dev/null && export CC="ccache aarch64-linux-gnu-gcc"
 
 say() { printf '\n\033[1;36m== %s\033[0m\n' "$*"; }
 
-# ----------------------------------------------------------------- kernel ----
-say "kernel source ($KERNEL_BRANCH)"
-if [ ! -d "$SRC/linux/.git" ]; then
-    git clone --depth 1 --single-branch --branch "$KERNEL_BRANCH" "$KERNEL_REPO" "$SRC/linux"
+# --------------------------------------------------------------- kernel -----
+say "kernel source"
+if [ -n "$KERNEL_SRC" ] && [ -d "$KERNEL_SRC" ]; then
+    L="$KERNEL_SRC"; echo "  reusing $L"
 else
-    echo "reusing $SRC/linux"
+    L="$SRC/linux"
+    if [ ! -d "$L/.git" ]; then
+        git clone --depth 1 --single-branch --branch "$KERNEL_BRANCH" "$KERNEL_REPO" "$L"
+    else
+        echo "  reusing $L"
+    fi
+fi
+
+# the tree may build in-tree or with O=out (a reused checkout often uses O=out).
+# When it uses O=out the config must live in the output dir, otherwise kbuild reports
+# "The source tree is not clean" and refuses to run.
+if [ -d "$L/out/arch/arm64/boot" ]; then
+    KMAKE="O=out"; KOUT="$L/out"
+else
+    KMAKE=""; KOUT="$L"
+fi
+echo "  build dir: ${KMAKE:-in-tree}"
+# kbuild refuses an O=out build when the source tree still has in-tree artifacts
+# ("The source tree is not clean").
+if [ -n "$KMAKE" ]; then
+    rm -f "$L/.config" "$L/.config.old"
+    rm -rf "$L/include/config" "$L/include/generated" "$L/arch/arm64/include/generated"
 fi
 
 say "apply config"
-cp "$HERE/config/author.config" "$SRC/linux/.config"
-# paths that only make sense inside the CI workspace
-sed -i "s|^CONFIG_EXTRA_FIRMWARE_DIR=.*|CONFIG_EXTRA_FIRMWARE_DIR=\"$SRC/linux/arch/arm64/boot/dts/mediatek\"|" \
-    "$SRC/linux/.config"
-sed -i "s|^CONFIG_INITRAMFS_SOURCE=.*|CONFIG_INITRAMFS_SOURCE=\"$WORK/initramfs\"|" \
-    "$SRC/linux/.config"
-grep -q '^CONFIG_INITRAMFS_COMPRESSION_GZIP' "$SRC/linux/.config" || \
-    echo 'CONFIG_INITRAMFS_COMPRESSION_GZIP=y' >> "$SRC/linux/.config"
+# evergo.config is the config proven on hardware: author's options plus
+#   CONFIG_USB_ETH / USB_ETH_RNDIS  (RNDIS gadget, no g_serial)
+#   CONFIG_F2FS_FS* / BLK_DEV_LOOP  (this rootfs)
+#   BACKLIGHT_LM36273 / DRM_PANEL_K16A_VDO (display)
+cp "$HERE/config/evergo.config" "$KOUT/.config"
+sed -i "s|^CONFIG_EXTRA_FIRMWARE_DIR=.*|CONFIG_EXTRA_FIRMWARE_DIR=\"$L/arch/arm64/boot/dts/mediatek\"|" "$KOUT/.config"
+sed -i "s|^CONFIG_INITRAMFS_SOURCE=.*|CONFIG_INITRAMFS_SOURCE=\"$WORK/initramfs\"|" "$KOUT/.config"
+grep -q '^CONFIG_INITRAMFS_COMPRESSION_GZIP' "$KOUT/.config" || \
+    echo 'CONFIG_INITRAMFS_COMPRESSION_GZIP=y' >> "$KOUT/.config"
 
-say "adapt the device tree (RAM $RAM_GIB GiB, panel $PANEL)"
-DTS="$SRC/linux/arch/arm64/boot/dts/mediatek/mt6833-xiaomi-evergo.dts"
+say "adapt the device tree (RAM $RAM_GIB GiB, panel $PANEL, high-speed USB)"
+DTS="$L/arch/arm64/boot/dts/mediatek/mt6833-xiaomi-evergo.dts"
 python3 - "$DTS" "$RAM_GIB" "$PANEL" <<'PY'
 import re, sys
 dts, gib, panel = sys.argv[1], int(sys.argv[2]), sys.argv[3]
 s = open(dts).read()
+
 # memory: the author's tree hardcodes 8 GiB for their own unit
 cells = "0 0x40000000 0x1 0x80000000" if gib == 6 else "0 0x40000000 2 0x00000000"
-s2 = re.sub(r'(memory:\s*memory@40000000\s*\{[^}]*?reg\s*=\s*<)[^>]*(>;)',
-            r'\g<1>' + cells + r'\2', s, flags=re.S)
-if s2 == s:
+# use subn and check the count: when the value is already correct the substitution
+# is a no-op, and comparing strings would wrongly report "node not found"
+s, n = re.subn(r'(memory:\s*memory@40000000\s*\{[^}]*?reg\s*=\s*<)[^>]*(>;)',
+               r'\g<1>' + cells + r'\2', s, count=1, flags=re.S)
+if n != 1:
     raise SystemExit("memory node not found in DTS")
-s = s2
-# panel: two modules exist for this handset
-s = re.sub(r'compatible = "k16a_[0-9a_]+[a-z]*_vdo,lcm";',
-           f'compatible = "{panel}";', s, count=1)
 
-# Trim the command line.  The author ships loglevel=8 + ignore_loglevel +
-# drm.debug=0x1e, which emit about 1.4 MB per boot; console output is synchronous
-# so at 115200 baud that is roughly two minutes spent blocked on the UART
-# (measured: 1.01 s to a shell after trimming, ~125 s before).  Everything
-# functional is deliberately left in place - the *_ignore_unused options and the
-# initcall blacklist work around a board whose PMIC has no driver yet.
+# panel variant
+s = re.sub(r'compatible = "k16a_[0-9a_]+[a-z]*_vdo,lcm";', f'compatible = "{panel}";', s, count=1)
+
+# USB: high-speed.  The author pinned full-speed after BABBLE during high-speed
+# enumeration with the configfs composite gadget; the legacy g_ether gadget used
+# here is stable at high speed and measured ~5x faster (0.9 -> 4.5 MB/s over scp).
+s = s.replace('maximum-speed = "full-speed";', 'maximum-speed = "high-speed";', 1)
+
+# command line: trimmed for speed, and with the watchdog thresholds relaxed.
+# The author's loglevel=8 + ignore_loglevel + drm.debug=0x1e emit ~1.4 MB per boot;
+# with a synchronous console that is minutes of blocked boot.  softlockup_panic=1
+# with watchdog_thresh=5 turns any 5 s stall (initramfs unpack, f2fs recovery) into
+# a panic and a reboot loop, which was observed repeatedly on hardware.
 BOOTARGS = (
     "earlycon=mtk8250,0x11002000 console=evenring console=ttyS0,921600n8 "
     "console=tty0 loglevel=4 printk.devkmsg=on clk_ignore_unused "
-    "pd_ignore_unused regulator_ignore_unused panic=10 softlockup_panic=1 "
-    "watchdog_thresh=5 initcall_blacklist=exynos4_pm_init_power_domain "
+    "pd_ignore_unused regulator_ignore_unused panic=10 "
+    "watchdog_thresh=30 initcall_blacklist=exynos4_pm_init_power_domain "
     "fbcon=nodefer cma=256M"
 )
 s, n = re.subn(r'bootargs = "[^"]*";', f'bootargs = "{BOOTARGS}";', s)
@@ -88,208 +135,216 @@ if n != 1:
 open(dts, "w").write(s)
 print(f"  memory   -> {cells}")
 print(f"  panel    -> {panel}")
-print(f"  bootargs -> loglevel=4, no drm.debug, no ignore_loglevel")
+print(f"  usb      -> high-speed")
+print(f"  bootargs -> loglevel=4, watchdog_thresh=30, no softlockup_panic")
 PY
 
 say "build dtb + kernel"
-cd "$SRC/linux"
-make -s olddefconfig
-make -s -j"$(nproc)" dtbs
-DTB=arch/arm64/boot/dts/mediatek/mt6833-xiaomi-evergo.dtb
+cd "$L"
+make -s $KMAKE olddefconfig
+make -s $KMAKE -j"$(nproc)" dtbs
+DTB="$KOUT/arch/arm64/boot/dts/mediatek/mt6833-xiaomi-evergo.dtb"
 [ -f "$DTB" ] || { echo "dtb build failed"; exit 1; }
 ls -l "$DTB"
 
-# --------------------------------------------------------------- rootfs -----
-say "rootfs ($DISTRO)"
-case "$DISTRO" in
-alpine)
-    AIDX="https://dl-cdn.alpinelinux.org/alpine/$ALPINE_BRANCH/releases/aarch64/"
-    curl -fsSL "$AIDX" -o "$WORK/idx.html"
-    TGZ=$(grep -oE 'alpine-minirootfs-[0-9.]+-aarch64\.tar\.gz' "$WORK/idx.html" | head -1)
-    [ -n "$TGZ" ] || { echo "cannot find minirootfs"; exit 1; }
-    curl -fsSL -o "$WORK/$TGZ" "$AIDX$TGZ"
-    rm -rf "$WORK/rootfs" && mkdir -p "$WORK/rootfs"
-    tar xzf "$WORK/$TGZ" -C "$WORK/rootfs"
-    # aarch64 static busybox for the installer initramfs
-    BIDX="https://dl-cdn.alpinelinux.org/alpine/$ALPINE_BRANCH/main/aarch64/"
-    curl -fsSL "$BIDX" -o "$WORK/bidx.html"
-    BB=$(grep -oE 'busybox-static-[^"]*\.apk' "$WORK/bidx.html" | head -1)
-    curl -fsSL -o "$WORK/$BB" "$BIDX$BB"
-    rm -rf "$WORK/bb" && mkdir -p "$WORK/bb"
-    tar xzf "$WORK/$BB" -C "$WORK/bb"
-    cp "$WORK/bb/bin/busybox.static" "$WORK/busybox"
-    ;;
-*)
-    echo "DISTRO=$DISTRO is not wired up yet; only alpine is implemented."
-    echo "Debian/Ubuntu need debootstrap plus qemu-aarch64-static in a second stage."
-    exit 1
-    ;;
-esac
-chmod 755 "$WORK/busybox"
+# -------------------------------------------------------------- rootfs ------
+say "Arch Linux ARM rootfs ($ROOTFS_MB MiB f2fs)"
+if [ -n "$ARCH_TARBALL" ] && [ -f "$ARCH_TARBALL" ]; then
+    echo "  reusing $ARCH_TARBALL"
+else
+    ARCH_TARBALL="$WORK/ArchLinuxARM-aarch64-latest.tar.gz"
+    curl -fsSL -o "$ARCH_TARBALL" "https://$MIRROR_HOST/archlinuxarm/os/ArchLinuxARM-aarch64-latest.tar.gz"
+fi
+
+ROOTIMG="$WORK/rootfs.f2fs"
+rm -f "$ROOTIMG"
+truncate -s "${ROOTFS_MB}M" "$ROOTIMG"
+mkfs.f2fs -f -l evergo -O extra_attr,inode_checksum,sb_checksum "$ROOTIMG" >/dev/null
 
 R="$WORK/rootfs"
-mkdir -p "$R"/{proc,sys,dev,tmp,run,mnt,media,opt,srv,root,var/log}
+rm -rf "$R"; mkdir -p "$R"
+mount -t f2fs -o loop "$ROOTIMG" "$R"
+trap 'mountpoint -q "$R" && umount "$R"' EXIT
+tar xzf "$ARCH_TARBALL" -C "$R" --numeric-owner 2>/dev/null || true
+echo "  extracted $(find "$R" -type f | wc -l) files"
 
-# The minirootfs has no openrc, so /sbin/init cannot start.  Use a small PID 1
-# instead; it also feeds the watchdog, which is mandatory or the SoC resets at
-# 31 s.
-cat > "$R/bin/evergo-init" <<'INIT'
-#!/bin/sh
-export PATH=/sbin:/bin:/usr/sbin:/usr/bin
-mount -t proc     none /proc 2>/dev/null
-mount -t sysfs    none /sys  2>/dev/null
-mount -t devtmpfs none /dev  2>/dev/null
-mkdir -p /dev/pts /tmp /run
-mount -t devpts none /dev/pts 2>/dev/null
-mount -t tmpfs  none /tmp 2>/dev/null
-mount -t tmpfs  none /run 2>/dev/null
-[ -x /bin/wdtfeed ] && /bin/wdtfeed &
-exec >/dev/ttyGS0 2>&1 </dev/ttyGS0
-echo ""
-echo "=========================================================="
-echo "   $(cat /etc/os-release 2>/dev/null | sed -n 's/^PRETTY_NAME=//p' | tr -d '\"') on evergo"
-echo "   $(uname -srm)"
-echo "=========================================================="
-echo "BOOT_TO_SHELL_UPTIME: $(cut -d' ' -f1 /proc/uptime)"
-head -3 /proc/meminfo
-echo "dmesg lines: $(dmesg 2>/dev/null | wc -l)"
-echo "rootfs: $(grep ' / ' /proc/mounts | head -1)"
-echo ""
-exec /bin/sh
-INIT
-chmod 755 "$R/bin/evergo-init"
+say "rootfs: pacman mirrors, keyring, packages"
+# pacman 7.x sandboxes itself with Landlock; this kernel has
+# CONFIG_SECURITY_LANDLOCK off, so every transaction would fail without this.
+sed -i 's/^#DisableSandboxFilesystem/DisableSandboxFilesystem/' "$R/etc/pacman.conf"
+sed -i 's/^#DisableSandboxSyscalls/DisableSandboxSyscalls/' "$R/etc/pacman.conf"
+cat > "$R/etc/pacman.d/mirrorlist" <<ML
+# Chinese mirrors; the stock mirror.archlinuxarm.org hosts do not resolve here.
+Server = https://mirrors.tuna.tsinghua.edu.cn/archlinuxarm/\$arch/\$repo
+Server = https://mirrors.ustc.edu.cn/archlinuxarm/\$arch/\$repo
+ML
 
-# Feed the hardware watchdog without spamming the log.
-#
-# `echo 1 > /dev/watchdog` opens and closes the device on every tick, and because
-# the magic 'V' byte is never written the watchdog core logs
-#   watchdog0: watchdog did not stop!
-# at CRIT level and re-arms the timer - once every 8 seconds, forever.  Holding the
-# descriptor open and writing a byte on demand keeps the timer fed and the log
-# quiet.  Measured on the handset: the message count stops growing entirely.
-cat > "$R/bin/wdtfeed" <<'WDTFEED'
-#!/bin/sh
-exec 3>/dev/watchdog || exit 1
-while true; do
-    echo . >&3
-    sleep 8
+cp -f /usr/bin/qemu-aarch64-static "$R/usr/bin/qemu-aarch64-static"
+mount --bind /dev "$R/dev"; mount --bind /proc "$R/proc"; mount --bind /sys "$R/sys"
+cp -f /etc/resolv.conf "$R/etc/resolv.conf"
+# DNS does not work inside the qemu-user chroot, so pin the mirror IPs for the build
+cp -f "$R/etc/hosts" "$WORK/hosts.bak"
+for h in "$MIRROR_HOST" mirrors.ustc.edu.cn; do
+    ip=$(getent hosts "$h" | awk '{print $1; exit}')
+    [ -n "$ip" ] && echo "$ip $h" >> "$R/etc/hosts"
 done
-WDTFEED
-chmod 755 "$R/bin/wdtfeed"
 
-cat > "$R/etc/fstab" <<'FSTAB'
-/dev/loop0  /      ext4  defaults,noatime  0 1
-proc        /proc  proc  defaults          0 0
-sysfs       /sys   sysfs defaults          0 0
-devtmpfs    /dev   devtmpfs defaults       0 0
-FSTAB
+chroot "$R" /usr/bin/qemu-aarch64-static /usr/bin/bash -c '
+set -e
+pacman-key --init >/dev/null 2>&1
+pacman-key --populate archlinuxarm >/dev/null 2>&1
+pacman -Sy --noconfirm >/dev/null
+pacman -S --noconfirm --needed \
+  btop htop fastfetch git wget curl nano vim tmux rsync unzip zip file less \
+  man-db which pacman-contrib net-tools bind-tools iputils traceroute mtr whois \
+  lm_sensors lsof strace sudo >/dev/null
+echo "  $(pacman -Q | wc -l) packages"
+'
 
-say "userdata.img"
-rm -f "$OUT/userdata.img"
-truncate -s "${ROOTFS_MB}M" "$OUT/userdata.img"
-mke2fs -t ext4 -F -L evergo-root -d "$R" -m 1 -q "$OUT/userdata.img"
-debugfs -R 'cat /etc/alpine-release' "$OUT/userdata.img" 2>/dev/null | sed 's/^/  alpine /'
-ls -l "$OUT/userdata.img"
-gzip -9 -c "$OUT/userdata.img" > "$OUT/userdata.img.gz"
+say "rootfs: apply the evergo overlay"
+tar xzf "$HERE/rootfs-overlay.tar.gz" -C "$R" --numeric-owner
+chmod 755 "$R/usr/local/bin/evergo-mode" "$R/usr/local/bin/evergo-info" "$R/usr/local/bin/evergo-first-login"
+chmod 644 "$R/etc/profile.d/00-evergo-welcome.sh" "$R/etc/evergo/fastfetch.jsonc"
+rm -f "$R/etc/hosts"; mv -f "$WORK/hosts.bak" "$R/etc/hosts"
+mkdir -p "$R/etc/systemd/system/multi-user.target.wants" \
+         "$R/etc/systemd/system/sysinit.target.wants" \
+         "$R/etc/systemd/system/getty.target.wants" \
+         "$R/etc/ssh/sshd_config.d" "$R/var/log" "$R/root"
+for u in sshd systemd-networkd systemd-resolved arch-boot-marker evergo-firstboot; do
+    ln -sf "/usr/lib/systemd/system/$u.service" "$R/etc/systemd/system/multi-user.target.wants/$u.service" 2>/dev/null || \
+    ln -sf "/etc/systemd/system/$u.service"     "$R/etc/systemd/system/multi-user.target.wants/$u.service"
+done
+ln -sf /usr/lib/systemd/system/systemd-networkd.socket "$R/etc/systemd/system/sockets.target.wants/systemd-networkd.socket" 2>/dev/null || true
+ln -sf /etc/systemd/system/evergo-watchdog.service "$R/etc/systemd/system/sysinit.target.wants/evergo-watchdog.service"
+ln -sf /usr/lib/systemd/system/serial-getty@.service "$R/etc/systemd/system/getty.target.wants/serial-getty@ttyGS0.service"
+[ -e "$R/etc/systemd/system/default.target" ] || ln -sf /usr/lib/systemd/system/multi-user.target "$R/etc/systemd/system/default.target"
+rm -f "$R/usr/bin/qemu-aarch64-static"
+
+say "rootfs: verify"
+test -x "$R/sbin/init"                                  && echo "  sbin/init ok"
+test -s "$R/etc/pacman.d/gnupg/pubring.gpg"             && echo "  keyring ok"
+test -x "$R/usr/local/bin/evergo-mode"                  && echo "  evergo-mode ok"
+test -x "$R/usr/local/bin/evergo-first-login"           && echo "  first-login ok"
+test -f "$R/etc/evergo/fastfetch.jsonc"                 && echo "  fastfetch config ok"
+grep -q '^PubkeyAuthentication no' "$R/etc/ssh/sshd_config.d/10-bringup.conf" && echo "  sshd: password only"
+echo "  hostname: $(cat "$R/etc/hostname")"
+
+sync
+# pacman-key leaves a gpg-agent behind that holds /dev open inside the tree, so a
+# plain umount returns EBUSY.  Kill the holders, then retry; lazy umount is only a
+# last resort because the image is fsck'd immediately afterwards.
+pkill -f 'gpg-agent' 2>/dev/null || true
+sleep 1
+for m in "$R/dev" "$R/proc" "$R/sys" "$R"; do
+    for try in 1 2 3 4 5; do
+        mountpoint -q "$m" 2>/dev/null || break
+        umount "$m" 2>/dev/null && break
+        pkill -f 'gpg-agent' 2>/dev/null || true
+        sleep 1
+    done
+    mountpoint -q "$m" 2>/dev/null && umount -l "$m" 2>/dev/null || true
+done
+sync
+mountpoint -q "$R" && { echo "  !! rootfs still mounted, aborting"; exit 1; }
+echo "  rootfs unmounted"
+fsck.f2fs -f "$ROOTIMG" 2>&1 | tail -2
+
+say "userdata images"
+cp -f "$ROOTIMG" "$OUT/userdata.img"
+gzip -9 -c "$ROOTIMG" > "$OUT/userdata.img.gz"
+img2simg "$ROOTIMG" "$OUT/userdata.simg" 2>/dev/null && echo "  sparse image ok"
+ls -l "$OUT"/userdata.* | awk '{printf "  %-24s %s bytes\n", $9, $5}'
 
 # ------------------------------------------------------------- initramfs ----
-say "installer initramfs"
+say "initramfs (mount userdata, switch_root)"
 IR="$WORK/initramfs"
-rm -rf "$IR" && mkdir -p "$IR"/{bin,dev,proc,sys,tmp,run,newroot}
-cp "$OUT/userdata.img.gz" "$IR/rootfs.img.gz"
-cp "$WORK/busybox" "$IR/bin/busybox"
-chmod 755 "$IR/bin/busybox"
-for a in sh mount umount cat gzip losetup switch_root sleep echo ls blockdev mkdir ln sync; do
+rm -rf "$IR"; mkdir -p "$IR"/{bin,dev,proc,sys,tmp,run,newroot}
+# aarch64 *static* busybox: the initramfs has no libc of its own, and the build
+# host's busybox would be the wrong architecture (this exact mistake gave
+# "Failed to execute /init (error -8)" during bring-up).
+BB="$WORK/busybox"
+if [ ! -x "$BB" ]; then
+    AIDX="https://$MIRROR_HOST/alpine/latest-stable/main/aarch64/"
+    curl -fsSL -o "$WORK/bidx.html" "$AIDX"
+    BBPKG=$(grep -oE 'busybox-static-[^"]*\.apk' "$WORK/bidx.html" | head -1)
+    [ -n "$BBPKG" ] || { echo "cannot find alpine busybox-static"; exit 1; }
+    curl -fsSL -o "$WORK/$BBPKG" "$AIDX$BBPKG"
+    rm -rf "$WORK/bb" && mkdir -p "$WORK/bb"
+    tar xzf "$WORK/$BBPKG" -C "$WORK/bb"
+    cp "$WORK/bb/bin/busybox.static" "$BB"
+fi
+chmod 755 "$BB"
+cp "$BB" "$IR/bin/busybox"; chmod 755 "$IR/bin/busybox"
+for a in sh mount umount cat gzip losetup switch_root sleep echo ls mkdir ln sync; do
     ln -sf busybox "$IR/bin/$a"
 done
-
-# The kernel opens /dev/console before exec'ing init.  With an initramfs present
-# prepare_namespace() never runs, so CONFIG_DEVTMPFS_MOUNT has no effect and
-# devtmpfs is not mounted yet - the node has to be inside the archive, or the
-# kernel prints "Warning: unable to open an initial console".  gen_initramfs.sh
-# emits "nod" entries for real character devices, so create them here.
+# the kernel opens /dev/console before exec'ing init; with an initramfs present
+# prepare_namespace() never runs so devtmpfs is not mounted yet
 if [ "$(id -u)" = 0 ]; then
     mknod "$IR/dev/console" c 5 1 && chmod 600 "$IR/dev/console"
     mknod "$IR/dev/null"    c 1 3 && chmod 666 "$IR/dev/null"
-else
-    echo "  (not root: skipping device nodes, the console warning will appear)"
 fi
-
-cat > "$IR/init" <<'INSTALLER'
+cat > "$IR/init" <<'INIT'
 #!/bin/sh
+# Mount the Arch root filesystem from the eMMC user area and hand over.
+#
+#   eMMC user area : /dev/sdc (no partition nodes - the GPT is wiped)
+#   userdata start : 0x304000000 = 12,952,010,752 bytes = 12352 MiB
+#   filesystem     : f2fs, mounted through a loop with an explicit offset
+#
+# USB is not touched here: g_ether provides RNDIS and Arch configures usb0 itself.
+UD_OFF=$((0x304000000))
 export PATH=/bin
 mount -t proc     none /proc 2>/dev/null
 mount -t sysfs    none /sys  2>/dev/null
 mount -t devtmpfs none /dev  2>/dev/null
-mkdir -p /newroot /tmp /run
+mkdir -p /newroot
 
-# nothing else feeds the watchdog once the bootloader has armed it.  Hold the
-# descriptor open like the rootfs wdtfeed does: `echo > /dev/watchdog` in a loop
-# closes the device every tick and the core logs "did not stop!" at CRIT level.
-[ -e /dev/watchdog ] && ( exec 3>/dev/watchdog; while : ; do echo . >&3; sleep 8; done ) &
-
-i=0; while [ $i -lt 40 ]; do [ -c /dev/ttyGS0 ] && break; sleep 0.25; i=$((i+1)); done
-if [ -c /dev/ttyGS0 ]; then exec >/dev/ttyGS0 2>&1 </dev/ttyGS0
-else exec >/dev/console 2>&1 </dev/console; fi
-
-say() { echo "[evergo] $*"; }
-echo ""
-echo "=========================================================="
-echo "   evergo installer - Alpine on userdata"
-echo "=========================================================="
-
-i=0; while [ $i -lt 60 ]; do [ -b /dev/sdc ] && break; sleep 0.25; i=$((i+1)); done
-[ -b /dev/sdc ] || { say "no /dev/sdc"; exec sh; }
-
-# userdata starts here (4096-byte units in the GPT).  No --sizelimit: a loop over
-# the raw disk already stops at the end of the disk, which is the only part of
-# the declared 226 GiB that physically exists on a 119 GiB LUN.
-UD_START=$((3162112 * 4096))
-DISK=$(blockdev --getsize64 /dev/sdc 2>/dev/null || echo 0)
-say "disk $((DISK / 1048576)) MiB, userdata at +$((UD_START / 1048576)) MiB"
-[ "$DISK" -gt "$UD_START" ] || { say "disk too small"; exec sh; }
-
-losetup -o "$UD_START" /dev/loop0 /dev/sdc || { say "losetup failed"; exec sh; }
-
-if mount -t ext4 -o ro /dev/loop0 /newroot 2>/dev/null && [ -f /newroot/etc/alpine-release ]; then
-    say "existing rootfs found, keeping it"
-    umount /newroot
-else
-    say "installing rootfs ($(stat -c%s rootfs.img.gz 2>/dev/null) compressed bytes)"
-    gzip -dc rootfs.img.gz > /dev/loop0 || { say "write failed"; exec sh; }
-    sync
-    say "installed"
+# nothing else feeds the hardware watchdog after the bootloader arms it (31 s).
+# Use an inherited descriptor: re-opening /dev/watchdog would fail once switch_root
+# has moved /dev, which is what caused a reboot loop every ~33 s.
+if [ -e /dev/watchdog ]; then
+    exec 3>/dev/watchdog
+    ( while : ; do echo . >&3; sleep 8; done ) &
 fi
 
-mount -t ext4 /dev/loop0 /newroot || { say "mount failed"; exec sh; }
-[ -x /newroot/bin/evergo-init ] || { say "no evergo-init"; exec sh; }
-say "switch_root"
-mount --move /proc /newroot/proc 2>/dev/null
-mount --move /sys  /newroot/sys  2>/dev/null
-mount --move /dev  /newroot/dev  2>/dev/null
-exec switch_root /newroot /bin/evergo-init
-INSTALLER
+i=0; while [ $i -lt 60 ]; do [ -b /dev/sdc ] && break; sleep 1; i=$((i+1)); done
+if [ -b /dev/sdc ]; then
+    losetup -o "$UD_OFF" /dev/loop0 /dev/sdc 2>/dev/null
+    mount -t f2fs -o rw /dev/loop0 /newroot 2>/dev/null
+fi
+
+if [ -x /newroot/sbin/init ]; then
+    # hand the watchdog to Arch's evergo-watchdog.service
+    echo V >&3 2>/dev/null
+    exec 3>&- 2>/dev/null
+    mkdir -p /newroot/dev /newroot/proc /newroot/sys /newroot/run
+    mount --move /dev  /newroot/dev  2>/dev/null
+    mount --move /proc /newroot/proc 2>/dev/null
+    mount --move /sys  /newroot/sys  2>/dev/null
+    exec switch_root /newroot /sbin/init
+fi
+
+# nothing bootable: never let PID 1 exit, or the kernel panics
+while : ; do /bin/sh; sleep 1; done
+INIT
 chmod 755 "$IR/init"
 
-say "kernel image"
-make -s -j"$(nproc)" Image
-rm -f usr/initramfs_data.cpio usr/initramfs_data.o usr/initramfs_inc_data usr/.initramfs_data.cpio.d
-make -s -j"$(nproc)" Image
-IMG=arch/arm64/boot/Image
-[ -f "$IMG" ] || { echo "kernel build failed"; exit 1; }
+say "build kernel with the initramfs"
+cd "$L"
+make -s $KMAKE -j"$(nproc)" Image
+rm -f "$KOUT"/usr/initramfs_data.cpio "$KOUT"/usr/initramfs_data.o "$KOUT"/usr/initramfs_inc_data "$KOUT"/usr/.initramfs_data.cpio.d
+make -s $KMAKE -j"$(nproc)" Image
+IMG="$KOUT/arch/arm64/boot/Image"
+[ -f "$IMG" ] || { echo "kernel build failed: $IMG missing"; exit 1; }
 ls -l "$IMG"
 
 # ---------------------------------------------------------------- pack ------
 say "boot.img"
-# The bootloader expects the kernel payload to be gzip followed by a vendor DTB.
+# the bootloader expects gzip(kernel) followed by the vendor DTB
 gzip -9 -n -c "$IMG" > "$WORK/image.gz"
 cat "$WORK/image.gz" "$HERE/config/vendor_dtb.bin" > "$WORK/kernel.bin"
-
-# empty ramdisk: with CONFIG_INITRAMFS_SOURCE the real initramfs lives inside the
-# kernel, and force-DT makes the bootloader's initrd irrelevant anyway
 printf '' | gzip -9 > "$WORK/empty-ramdisk.gz"
-
-# the bootloader's own argument line, copied verbatim from the stock image
 CMDLINE='bootopt=64S3,32N2,64N2 androidboot.selinux=enforcing buildvariant=user'
 
 python3 "$HERE/scripts/mkbootimg.py" \
@@ -309,4 +364,20 @@ python3 "$HERE/scripts/avb.py" \
     --output "$OUT/boot.img"
 
 say "artifacts"
-ls -l "$OUT"/*.img "$OUT"/*.gz 2>/dev/null | grep -v '^d'
+ls -l "$OUT"/*.img "$OUT"/*.img.gz "$OUT"/*.simg 2>/dev/null | awk '{printf "  %-28s %s bytes\n", $9, $5}'
+cat > "$OUT/SHA256SUMS" <<'EOF'
+EOF
+( cd "$OUT" && sha256sum boot.img userdata.img.gz userdata.simg 2>/dev/null >> SHA256SUMS || true )
+cat "$OUT/SHA256SUMS"
+
+say "flash"
+cat <<'MSG'
+  fastboot flash boot_b      boot.img
+  fastboot -S 200M flash userdata userdata.simg      # or: gunzip -c userdata.img.gz | ...
+  fastboot reboot
+
+  On first boot the phone comes up as a DHCP client on usb0 (router mode) and also
+  holds 169.254.42.1/16, so a directly attached PC can reach it without any
+  configuration:
+      ssh root@169.254.42.1        (password: evergo, then the first-login wizard)
+MSG
