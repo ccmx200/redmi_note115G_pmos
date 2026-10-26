@@ -251,7 +251,7 @@ pacman -Sy --noconfirm >/dev/null
 pacman -S --noconfirm --needed \
   btop htop fastfetch git wget curl nano vim tmux rsync unzip zip file less \
   man-db which pacman-contrib net-tools bind-tools iputils traceroute mtr whois \
-  lm_sensors lsof strace sudo >/dev/null
+  lm_sensors lsof strace sudo f2fs-tools >/dev/null
 echo "  $(pacman -Q | wc -l) packages"
 '
 
@@ -329,7 +329,10 @@ ls -l "$OUT"/userdata.* | awk '{printf "  %-24s %s bytes\n", $9, $5}'
 # ------------------------------------------------------------- initramfs ----
 say "initramfs (mount userdata, switch_root)"
 IR="$WORK/initramfs"
-rm -rf "$IR"; mkdir -p "$IR"/{bin,dev,proc,sys,tmp,run,newroot}
+rm -rf "$IR"; mkdir -p "$IR"/{bin,dev,proc,sys,tmp,run,newroot,usr/lib}
+# Arch has /lib as a symlink to usr/lib and the ELF interpreter asks for
+# /lib/ld-linux-aarch64.so.1, so mirror that layout here
+ln -sfn usr/lib "$IR/lib"
 # aarch64 *static* busybox: the initramfs has no libc of its own, and the build
 # host's busybox would be the wrong architecture (this exact mistake gave
 # "Failed to execute /init (error -8)" during bring-up).
@@ -355,25 +358,35 @@ if [ "$(id -u)" = 0 ]; then
     mknod "$IR/dev/console" c 5 1 && chmod 600 "$IR/dev/console"
     mknod "$IR/dev/null"    c 1 3 && chmod 666 "$IR/dev/null"
 fi
+# The first boot grows the filesystem to fill the eMMC.  f2fs cannot be resized while
+# mounted, so that has to happen here, in the initramfs, before the root is handed over -
+# which means resize.f2fs and everything it links against has to be inside this archive.
+if [ -x "$R/usr/sbin/resize.f2fs" ]; then
+    python3 "$HERE/scripts/collect-libs.py" "$R" /usr/sbin/resize.f2fs "$IR" | sed 's/^/  /'
+else
+    echo "  !! resize.f2fs missing from the rootfs, first-boot growth disabled"
+fi
+
 cat > "$IR/init" <<'INIT'
 #!/bin/sh
 # Mount the Arch root filesystem from the eMMC user area and hand over.
 #
 #   eMMC user area : /dev/sdc (no partition nodes - the GPT is wiped)
 #   userdata start : 0x304000000 = 12,952,010,752 bytes = 12352 MiB
-#   filesystem     : f2fs, mounted through a loop with an explicit offset
-#
-# USB is not touched here: g_ether provides RNDIS and Arch configures usb0 itself.
+#   filesystem     : f2fs, via a loop with an explicit offset; the loop spans the rest
+#                    of the disk (about 107 GiB), which is what the filesystem is grown
+#                    to on the first boot.  f2fs cannot be resized while mounted, so the
+#                    growth happens here, before switch_root.
 UD_OFF=$((0x304000000))
-export PATH=/bin
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 mount -t proc     none /proc 2>/dev/null
 mount -t sysfs    none /sys  2>/dev/null
 mount -t devtmpfs none /dev  2>/dev/null
 mkdir -p /newroot
 
-# nothing else feeds the hardware watchdog after the bootloader arms it (31 s).
-# Use an inherited descriptor: re-opening /dev/watchdog would fail once switch_root
-# has moved /dev, which is what caused a reboot loop every ~33 s.
+# nothing else feeds the hardware watchdog after the bootloader arms it (31 s).  Use an
+# inherited descriptor: re-opening /dev/watchdog would fail once switch_root has moved
+# /dev, which is what caused a reboot loop every ~33 s.
 if [ -e /dev/watchdog ]; then
     exec 3>/dev/watchdog
     ( while : ; do echo . >&3; sleep 8; done ) &
@@ -383,6 +396,23 @@ i=0; while [ $i -lt 60 ]; do [ -b /dev/sdc ] && break; sleep 1; i=$((i+1)); done
 if [ -b /dev/sdc ]; then
     losetup -o "$UD_OFF" /dev/loop0 /dev/sdc 2>/dev/null
     mount -t f2fs -o rw /dev/loop0 /newroot 2>/dev/null
+fi
+
+# first boot: grow the filesystem to the end of the eMMC.  The marker lives on the
+# filesystem itself, so a plain reflash of boot.img never triggers it again.
+if [ -x /newroot/sbin/init ] && [ ! -e /newroot/.evergo-grown ]; then
+    echo "[evergo] growing the root filesystem to fill the eMMC"
+    umount /newroot 2>/dev/null
+    if [ -x /usr/sbin/resize.f2fs ]; then
+        # -F skips the "this is experimental, continue? [y/n]" prompt, which
+        # would otherwise block here with no stdin attached
+        /usr/sbin/resize.f2fs -F /dev/loop0 > /dev/console 2>&1
+        echo "[evergo] resize done"
+    else
+        echo "[evergo] resize.f2fs missing, skipping"
+    fi
+    mount -t f2fs -o rw /dev/loop0 /newroot 2>/dev/null
+    touch /newroot/.evergo-grown 2>/dev/null
 fi
 
 if [ -x /newroot/sbin/init ]; then
