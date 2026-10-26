@@ -32,10 +32,10 @@ RAM_GIB="${RAM_GIB:-6}"                  # 4/6/8 GiB units exist
 PANEL="${PANEL:-k16a_36_02_0a_vdo,lcm}"  # Tianma; CSOT is k16a_42_02_0b_vdo,lcm
 ROOTFS_MB="${ROOTFS_MB:-6144}"           # 6 GiB f2fs
 ARCH_TARBALL="${ARCH_TARBALL:-}"         # reuse a downloaded Arch ARM rootfs tarball
-# mirror used to fetch packages during the build.  The Chinese mirrors are
-# unreachable from GitHub's runners, so default to the official geo-balanced
-# host and let the caller override it (MIRROR_HOST=mirrors.tuna... locally).
-MIRROR_HOST="${MIRROR_HOST:-mirror.archlinuxarm.org}"
+# mirror used to fetch packages during the build.  The Chinese mirrors are unreachable
+# from GitHub's runners, so the default is OCF (Berkeley), which serves the whole tree
+# directly; override with MIRROR_HOST=mirrors.tuna.tsinghua.edu.cn locally if faster.
+MIRROR_HOST="${MIRROR_HOST:-mirrors.ocf.berkeley.edu}"
 USERDATA_OFF=$((0x304000000))            # 12952010752
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -214,7 +214,8 @@ say "rootfs: pacman mirrors, keyring, packages"
 sed -i 's/^#DisableSandboxFilesystem/DisableSandboxFilesystem/' "$R/etc/pacman.conf"
 sed -i 's/^#DisableSandboxSyscalls/DisableSandboxSyscalls/' "$R/etc/pacman.conf"
 cat > "$R/etc/pacman.d/mirrorlist" <<ML
-# Chinese mirrors; the stock mirror.archlinuxarm.org hosts do not resolve here.
+# build-time mirror list; rewritten for the delivered image further down
+Server = https://${MIRROR_HOST}/archlinuxarm/\$arch/\$repo
 Server = https://mirrors.tuna.tsinghua.edu.cn/archlinuxarm/\$arch/\$repo
 Server = https://mirrors.ustc.edu.cn/archlinuxarm/\$arch/\$repo
 ML
@@ -224,7 +225,7 @@ mount --bind /dev "$R/dev"; mount --bind /proc "$R/proc"; mount --bind /sys "$R/
 cp -f /etc/resolv.conf "$R/etc/resolv.conf"
 # DNS does not work inside the qemu-user chroot, so pin the mirror IPs for the build
 cp -f "$R/etc/hosts" "$WORK/hosts.bak"
-for h in "$MIRROR_HOST" mirrors.ustc.edu.cn; do
+for h in "$MIRROR_HOST" mirrors.tuna.tsinghua.edu.cn mirrors.ustc.edu.cn; do
     ip=$(getent hosts "$h" | awk '{print $1; exit}')
     [ -n "$ip" ] && echo "$ip $h" >> "$R/etc/hosts"
 done
