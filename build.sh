@@ -24,7 +24,9 @@
 set -euo pipefail
 
 KERNEL_REPO="${KERNEL_REPO:-https://github.com/ccmx200/linux-evergo.git}"
-KERNEL_BRANCH="${KERNEL_BRANCH:-bringup/evergo-mainline}"
+# the author's repo has had its branches rewritten before (the old
+# bringup/evergo-mainline is gone, only main remains), so try a few and fail loudly
+KERNEL_BRANCH="${KERNEL_BRANCH:-main}"
 KERNEL_SRC="${KERNEL_SRC:-}"             # reuse an existing checkout if set
 RAM_GIB="${RAM_GIB:-6}"                  # 4/6/8 GiB units exist
 PANEL="${PANEL:-k16a_36_02_0a_vdo,lcm}"  # Tianma; CSOT is k16a_42_02_0b_vdo,lcm
@@ -59,7 +61,17 @@ if [ -n "$KERNEL_SRC" ] && [ -d "$KERNEL_SRC" ]; then
 else
     L="$SRC/linux"
     if [ ! -d "$L/.git" ]; then
-        git clone --depth 1 --single-branch --branch "$KERNEL_BRANCH" "$KERNEL_REPO" "$L"
+        # KERNEL_BRANCH may have been renamed upstream; fall through to the usual
+        # defaults instead of dying on a git clone error
+        for b in "$KERNEL_BRANCH" main master; do
+            echo "  cloning branch $b"
+            if git clone --depth 1 --single-branch --branch "$b" "$KERNEL_REPO" "$L" 2>/dev/null; then
+                echo "  using $b"
+                break
+            fi
+            rm -rf "$L"
+        done
+        [ -d "$L/.git" ] || { echo "  !! could not clone $KERNEL_REPO"; exit 1; }
     else
         echo "  reusing $L"
     fi

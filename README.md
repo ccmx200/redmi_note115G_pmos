@@ -79,7 +79,7 @@ Known gaps (the upstream bring-up tree is still in progress):
 `.github/workflows/build.yml` runs `build.sh`, which:
 
 1. clones the kernel from [`ccmx200/linux-evergo`](https://github.com/ccmx200/linux-evergo)
-   (branch `bringup/evergo-mainline`, a fork of
+   (branch `main`, a fork of
    [`KevinLmK0702/linux-evergo`](https://github.com/KevinLmK0702/linux-evergo)), or
    reuses an existing tree via `KERNEL_SRC`;
 2. applies `config/evergo.config`, the kernel configuration validated on the handset;
