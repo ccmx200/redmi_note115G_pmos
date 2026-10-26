@@ -32,7 +32,10 @@ RAM_GIB="${RAM_GIB:-6}"                  # 4/6/8 GiB units exist
 PANEL="${PANEL:-k16a_36_02_0a_vdo,lcm}"  # Tianma; CSOT is k16a_42_02_0b_vdo,lcm
 ROOTFS_MB="${ROOTFS_MB:-6144}"           # 6 GiB f2fs
 ARCH_TARBALL="${ARCH_TARBALL:-}"         # reuse a downloaded Arch ARM rootfs tarball
-MIRROR_HOST="${MIRROR_HOST:-mirrors.tuna.tsinghua.edu.cn}"
+# mirror used to fetch packages during the build.  The Chinese mirrors are
+# unreachable from GitHub's runners, so default to the official geo-balanced
+# host and let the caller override it (MIRROR_HOST=mirrors.tuna... locally).
+MIRROR_HOST="${MIRROR_HOST:-mirror.archlinuxarm.org}"
 USERDATA_OFF=$((0x304000000))            # 12952010752
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -241,6 +244,17 @@ pacman -S --noconfirm --needed \
   lm_sensors lsof strace sudo >/dev/null
 echo "  $(pacman -Q | wc -l) packages"
 '
+
+# The mirrorlist written for the build points at whatever the build could reach. The
+# delivered image should use mirrors that work in China; pacman tries them in order and
+# skips failures, so a slow first entry only costs time, not correctness.
+cat > "$R/etc/pacman.d/mirrorlist" <<'ML'
+# Arch Linux ARM mirrors.  Tsinghua and USTC are reachable from mainland China; the
+# official host is kept as a fallback.
+Server = https://mirrors.tuna.tsinghua.edu.cn/archlinuxarm/$arch/$repo
+Server = https://mirrors.ustc.edu.cn/archlinuxarm/$arch/$repo
+Server = https://mirror.archlinuxarm.org/$arch/$repo
+ML
 
 say "rootfs: apply the evergo overlay"
 tar xzf "$HERE/rootfs-overlay.tar.gz" -C "$R" --numeric-owner
