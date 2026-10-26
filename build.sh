@@ -225,9 +225,18 @@ mount --bind /dev "$R/dev"; mount --bind /proc "$R/proc"; mount --bind /sys "$R/
 cp -f /etc/resolv.conf "$R/etc/resolv.conf"
 # DNS does not work inside the qemu-user chroot, so pin the mirror IPs for the build
 cp -f "$R/etc/hosts" "$WORK/hosts.bak"
+# getent hosts returns IPv6 first on some hosts, and an IPv6 pin makes curl fail
+# instantly ("Could not connect to server after 1 ms") because the chroot has no IPv6
+# route - ask for the A record specifically
 for h in "$MIRROR_HOST" mirrors.tuna.tsinghua.edu.cn mirrors.ustc.edu.cn; do
-    ip=$(getent hosts "$h" | awk '{print $1; exit}')
-    [ -n "$ip" ] && echo "$ip $h" >> "$R/etc/hosts"
+    ip=$(getent ahostsv4 "$h" 2>/dev/null | awk 'NR==1{print $1}')
+    [ -z "$ip" ] && ip=$(getent hosts "$h" 2>/dev/null | awk '$1 ~ /^[0-9]+\./ {print $1; exit}')
+    if [ -n "$ip" ]; then
+        echo "$ip $h" >> "$R/etc/hosts"
+        echo "  pinned $h -> $ip"
+    else
+        echo "  could not resolve $h (will rely on DNS)"
+    fi
 done
 
 # CheckSpace stats the cachedir's mount point, which a plain directory chroot is
