@@ -1,11 +1,11 @@
 name: build evergo images
 
 # Builds the two artifacts users need and publishes them as a release:
-#   boot.img      kernel + initramfs installer
-#   userdata.img  prebuilt ext4 rootfs (Alpine)
+#   boot.img         kernel + a small initramfs that mounts userdata and switches into it
+#   userdata.img.gz  Arch Linux ARM on f2fs, flashed to the userdata partition
 #
-# The build has to happen here rather than locally because a kernel build plus a
-# 1.5 GiB filesystem is not something to hand to users from a laptop.
+# The kernel build has to happen here rather than locally: a cross-compiled kernel plus
+# a 6 GiB filesystem is not something to hand users from a laptop.
 
 on:
   push:
@@ -23,18 +23,13 @@ on:
         required: true
       rootfs_mb:
         description: 'size of the rootfs image in MiB'
-        default: '1536'
-        required: true
-      distro:
-        description: 'rootfs distribution (alpine)'
-        default: 'alpine'
+        default: '6144'
         required: true
 
 env:
   RAM_GIB: ${{ github.event.inputs.ram_gib || '6' }}
   PANEL: ${{ github.event.inputs.panel || 'k16a_36_02_0a_vdo,lcm' }}
-  ROOTFS_MB: ${{ github.event.inputs.rootfs_mb || '1536' }}
-  DISTRO: ${{ github.event.inputs.distro || 'alpine' }}
+  ROOTFS_MB: ${{ github.event.inputs.rootfs_mb || '6144' }}
 
 # publishing a release needs write access; new repositories default to read-only
 permissions:
@@ -58,9 +53,11 @@ jobs:
           sudo apt-get install -y -qq \
             gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
             ccache bc bison flex libssl-dev libelf-dev libncurses-dev \
-            e2fsprogs cpio gzip xz-utils python3 device-tree-compiler
+            cpio gzip xz-utils python3 device-tree-compiler \
+            qemu-user-static f2fs-tools android-sdk-libsparse-utils
           aarch64-linux-gnu-gcc --version | head -1
-          mke2fs -V 2>&1 | head -1
+          mkfs.f2fs -V 2>&1 | head -1
+          qemu-aarch64-static --version | head -1
 
       - name: restore ccache
         uses: actions/cache@v4
@@ -85,10 +82,11 @@ jobs:
           ls -l out/
           echo "--- boot.img header ---"
           od -A d -t x1 -N 48 out/boot.img
-          echo "--- userdata contents ---"
-          debugfs -R 'cat /etc/alpine-release' out/userdata.img 2>/dev/null || true
+          echo "--- userdata: is it f2fs? ---"
+          file out/userdata.img || true
+          dumpe2fs -h out/userdata.img 2>/dev/null | head -3 || true
           echo "--- checksums ---"
-          sha256sum out/boot.img out/userdata.img out/userdata.img.gz > out/SHA256SUMS || true
+          sha256sum out/boot.img out/userdata.img.gz out/userdata.simg > out/SHA256SUMS || true
           cat out/SHA256SUMS || true
 
       - name: upload build artifacts
@@ -106,35 +104,52 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
-          name: evergo build ${{ github.run_number }} (RAM ${RAM_GIB} GiB)
+          name: evergo build ${{ github.run_number }} (RAM ${{ env.RAM_GIB }} GiB)
           body: |
-            Alpine ${{ env.DISTRO }} rootfs on the Redmi Note 11T 5G, mainline Linux.
+            Arch Linux ARM on the Redmi Note 11T 5G (evergo / MT6833), mainline Linux.
 
             | item | value |
             |---|---|
             | RAM variant | ${{ env.RAM_GIB }} GiB |
             | panel | `${{ env.PANEL }}` |
-            | rootfs | ${{ env.DISTRO }}, ${{ env.ROOTFS_MB }} MiB |
+            | rootfs | Arch Linux ARM, f2fs, ${{ env.ROOTFS_MB }} MiB |
 
             ## flash
 
             ```bash
             fastboot flash boot_b  boot.img
-            fastboot flash userdata userdata.img
+            fastboot -S 200M flash userdata userdata.simg   # or gunzip userdata.img.gz first
             fastboot --set-active=b
             fastboot reboot
             ```
 
-            `boot.img` alone is enough: it carries a compressed rootfs and installs
-            itself on the first boot. `userdata.img` is for flashing the partition
-            directly.
+            Both images are needed: `boot.img` carries the kernel and a small initramfs
+            that mounts the filesystem, `userdata.img.gz` is the filesystem itself.
 
-            The console is the USB gadget serial port (`/dev/ttyGS0`) - plug the
-            phone into a PC and open the new COM port at 115200 8N1.
+            ## first boot
 
-            **This overwrites the userdata partition, so Android's user data is
-            lost.** `fastboot --set-active=a` returns to Android, which will then
-            want to format data again.
+            There is **no serial console**. The phone comes up as a USB RNDIS network
+            device, so it is reached over the network instead:
+
+            * plugged into a **router's USB port** it is a DHCP client and joins that LAN
+              with internet access;
+            * plugged into a **PC** it always holds `169.254.42.1/16`, so this works with
+              no configuration at all:
+
+            ```bash
+            ssh root@169.254.42.1      # password: evergo
+            ```
+
+            The first login runs a short wizard that can create a normal user, set the
+            hostname and change the root password. SSH accepts passwords only - key
+            authentication is disabled.
+
+            `evergo-mode pc` switches `usb0` from a DHCP client to a DHCP server, so a
+            directly attached computer configures itself on `192.168.42.0/24`.
+
+            **This overwrites the userdata partition, so Android's user data is lost.**
+            `fastboot --set-active=a` returns to Android, which will then want to format
+            data again.
           files: |
             out/boot.img
             out/userdata.img.gz
