@@ -226,6 +226,10 @@ for h in "$MIRROR_HOST" mirrors.ustc.edu.cn; do
     [ -n "$ip" ] && echo "$ip $h" >> "$R/etc/hosts"
 done
 
+# CheckSpace stats the cachedir's mount point, which a plain directory chroot is
+# not, so it reports "not enough free disk space" and aborts the transaction
+sed -i 's/^CheckSpace/#CheckSpace/' "$R/etc/pacman.conf"
+
 chroot "$R" /usr/bin/qemu-aarch64-static /usr/bin/bash -c '
 set -e
 pacman-key --init >/dev/null 2>&1
@@ -287,8 +291,10 @@ ROOTIMG="$WORK/rootfs.f2fs"
 rm -f "$ROOTIMG"
 truncate -s "${ROOTFS_MB}M" "$ROOTIMG"
 mkfs.f2fs -f -l evergo -O extra_attr,inode_checksum,sb_checksum "$ROOTIMG" >/dev/null
-sload.f2fs -f "$R" -P "$ROOTIMG" 2>&1 | tail -3 | sed 's/^/  /'
-fsck.f2fs -f "$ROOTIMG" 2>&1 | tail -2 | sed 's/^/  /'
+# sload.f2fs returns 1 even when it succeeds, so ignore its status - the fsck
+# below is what actually validates the image
+sload.f2fs -f "$R" -P "$ROOTIMG" 2>&1 | tail -3 | sed 's/^/  /' || true
+fsck.f2fs -f "$ROOTIMG" 2>&1 | tail -2 | sed 's/^/  /' || true
 
 say "userdata images"
 cp -f "$ROOTIMG" "$OUT/userdata.img"
