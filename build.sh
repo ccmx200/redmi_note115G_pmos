@@ -196,17 +196,14 @@ else
     curl -fsSL -o "$ARCH_TARBALL" "https://$MIRROR_HOST/archlinuxarm/os/ArchLinuxARM-aarch64-latest.tar.gz"
 fi
 
-ROOTIMG="$WORK/rootfs.f2fs"
-rm -f "$ROOTIMG"
-truncate -s "${ROOTFS_MB}M" "$ROOTIMG"
-mkfs.f2fs -f -l evergo -O extra_attr,inode_checksum,sb_checksum "$ROOTIMG" >/dev/null
-
+# The rootfs is assembled in a plain directory and only written into the f2fs image at
+# the very end, with sload.f2fs.  The obvious alternative - mkfs.f2fs then mount -o loop
+# - does not work in CI: the runner kernel has no f2fs module ("mount: failed mount
+# system call"), and mounting needs root.  sload.f2fs needs neither.
 R="$WORK/rootfs"
 rm -rf "$R"; mkdir -p "$R"
-mount -t f2fs -o loop "$ROOTIMG" "$R"
-trap 'mountpoint -q "$R" && umount "$R"' EXIT
 tar xzf "$ARCH_TARBALL" -C "$R" --numeric-owner 2>/dev/null || true
-echo "  extracted $(find "$R" -type f | wc -l) files"
+echo "  extracted $(find "$R" -type f 2>/dev/null | wc -l) files"
 
 say "rootfs: pacman mirrors, keyring, packages"
 # pacman 7.x sandboxes itself with Landlock; this kernel has
@@ -270,12 +267,10 @@ grep -q '^PubkeyAuthentication no' "$R/etc/ssh/sshd_config.d/10-bringup.conf" &&
 echo "  hostname: $(cat "$R/etc/hostname")"
 
 sync
-# pacman-key leaves a gpg-agent behind that holds /dev open inside the tree, so a
-# plain umount returns EBUSY.  Kill the holders, then retry; lazy umount is only a
-# last resort because the image is fsck'd immediately afterwards.
+# pacman-key leaves a gpg-agent behind that holds /dev open; kill it before unmounting
 pkill -f 'gpg-agent' 2>/dev/null || true
 sleep 1
-for m in "$R/dev" "$R/proc" "$R/sys" "$R"; do
+for m in "$R/dev" "$R/proc" "$R/sys"; do
     for try in 1 2 3 4 5; do
         mountpoint -q "$m" 2>/dev/null || break
         umount "$m" 2>/dev/null && break
@@ -285,9 +280,15 @@ for m in "$R/dev" "$R/proc" "$R/sys" "$R"; do
     mountpoint -q "$m" 2>/dev/null && umount -l "$m" 2>/dev/null || true
 done
 sync
-mountpoint -q "$R" && { echo "  !! rootfs still mounted, aborting"; exit 1; }
-echo "  rootfs unmounted"
-fsck.f2fs -f "$ROOTIMG" 2>&1 | tail -2
+echo "  chroot unmounted"
+
+say "userdata image (f2fs via sload)"
+ROOTIMG="$WORK/rootfs.f2fs"
+rm -f "$ROOTIMG"
+truncate -s "${ROOTFS_MB}M" "$ROOTIMG"
+mkfs.f2fs -f -l evergo -O extra_attr,inode_checksum,sb_checksum "$ROOTIMG" >/dev/null
+sload.f2fs -f "$R" -P "$ROOTIMG" 2>&1 | tail -3 | sed 's/^/  /'
+fsck.f2fs -f "$ROOTIMG" 2>&1 | tail -2 | sed 's/^/  /'
 
 say "userdata images"
 cp -f "$ROOTIMG" "$OUT/userdata.img"
