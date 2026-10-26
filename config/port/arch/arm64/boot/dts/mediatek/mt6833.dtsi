@@ -1,0 +1,960 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * Copyright (c) 2025 Ryo "evilMyQueen" Yamada <evilMyQueen@mainlining.org>
+ */
+
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/interrupt-controller/arm-gic.h>
+#include <dt-bindings/interrupt-controller/irq.h>
+#include <dt-bindings/phy/phy.h>
+#include <dt-bindings/thermal/thermal.h>
+#include <dt-bindings/clock/mediatek,mt6833-clk.h>
+#include <dt-bindings/power/mediatek,mt6833-power.h>
+/*
+ * The mt6833 GCE is an mt8183 clone (same base 0x10228000, same SPI 203,
+ * same #mbox-cells = <3>), so its subsys ids and thread priorities carry
+ * over verbatim; there is no upstream mt6833 gce header yet.
+ */
+#include <dt-bindings/gce/mt8183-gce.h>
+
+/* #include <dt-bindings/gce/mediatek,mt6833-gce.h>
+ * #include <dt-bindings/memory/mt6833-larb-port.h
+ * #include <dt-bindings/power/mediatek,mt6833-power.h>
+ * #include <dt-bindings/reset/mediatek,mt6833-resets.h>
+ */
+
+/ {
+	compatible = "mediatek,mt6833";
+	interrupt-parent = <&sysirq>;
+	#address-cells = <2>;
+	#size-cells = <2>;
+
+	aliases {
+		serial0 = &uart0;
+		mutex0 = &disp_mutex0;
+	};
+
+	cpus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		cpu-map {
+			cluster0 {
+				core0 {
+					cpu = <&cpu0>;
+				};
+
+				core1 {
+					cpu = <&cpu1>;
+				};
+
+				core2 {
+					cpu = <&cpu2>;
+				};
+
+				core3 {
+					cpu = <&cpu3>;
+				};
+				
+				core4 {
+					cpu = <&cpu4>;
+				};
+
+				core5 {
+					cpu = <&cpu5>;
+				};
+			};
+
+			cluster1 {
+				core0 {
+					cpu = <&cpu6>;
+				};
+
+				core1 {
+					cpu = <&cpu7>;
+				};
+			};
+		};
+
+			/*
+			 * No cpu-idle-states on purpose.
+			 *
+			 * The vendor list was <&cpuoff_l &clusteroff_l &mcusysoff &s2idle>,
+			 * i.e. three states that go through PSCI CPU_SUSPEND asking the
+			 * firmware to power down a cluster (0x01010001), the "MCU sys"
+			 * (0x01010002) and even an S2 idle entry (0x01010100).  This
+			 * board's ATF/GZ is the old signed generation that this port is
+			 * already fighting elsewhere, and those calls do not come back:
+			 * the CPU hard-hangs, which is exactly what the logs show --
+			 * an RCU stall whose CPU never answers the NMI backtrace either
+			 * ("these CPUS still haven't responded to the NMI"), and a hang
+			 * point that wanders wherever the init first blocks, because
+			 * that is simply the first time a CPU goes idle.
+			 *
+			 * Dropping the property leaves the kernel with plain arch idle
+			 * (a local WFI, no firmware involved).  If the board then
+			 * survives, the shallow states can be added back one at a time.
+			 */
+		cpu0: cpu@0 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a55";
+			reg = <0x00>;
+			enable-method = "psci";
+			clock-frequency = <2000000000>;
+		};
+
+		cpu1: cpu@1 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a55";
+			reg = <0x100>;
+			enable-method = "psci";
+			clock-frequency = <2000000000>;
+		};
+
+		cpu2: cpu@2 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a55";
+			reg = <0x200>;
+			enable-method = "psci";
+			clock-frequency = <2000000000>;
+		};
+
+		cpu3: cpu@3 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a55";
+			reg = <0x300>;
+			enable-method = "psci";
+			clock-frequency = <2000000000>;
+		};
+
+		cpu4: cpu@4 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a55";
+			reg = <0x400>;
+			enable-method = "psci";
+			clock-frequency = <2000000000>;
+		};
+
+		cpu5: cpu@5 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a55";
+			reg = <0x500>;
+			enable-method = "psci";
+			clock-frequency = <2000000000>;
+		};
+
+		cpu6: cpu@100 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a76";
+			reg = <0x600>;
+			enable-method = "psci";
+			clock-frequency = <2000000000>;
+		};
+
+		cpu7: cpu@101 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a76";
+			reg = <0x700>;
+			enable-method = "psci";
+			clock-frequency = <2000000000>;
+
+		};
+
+		idle-states {
+			entry-method = "arm,psci";
+			cpuoff_l: cpuoff_l {
+				compatible = "arm,idle-state";
+				arm,psci-suspend-param = <0x00010001>;
+				local-timer-stop;
+				entry-latency-us = <50>;
+				exit-latency-us = <100>;
+				min-residency-us = <1600>;
+			};
+
+			cpuoff_b: cpuoff_b {
+				compatible = "arm,idle-state";
+				arm,psci-suspend-param = <0x00010001>;
+				local-timer-stop;
+				entry-latency-us = <50>;
+				exit-latency-us = <100>;
+				min-residency-us = <1400>;
+			};
+
+			clusteroff_l: clusteroff_l {
+				compatible = "arm,idle-state";
+				arm,psci-suspend-param = <0x01010001>;
+				local-timer-stop;
+				entry-latency-us = <100>;
+				exit-latency-us = <250>;
+				min-residency-us = <2100>;
+			};
+
+			clusteroff_b: clusteroff_b {
+				compatible = "arm,idle-state";
+				arm,psci-suspend-param = <0x01010001>;
+				local-timer-stop;
+				entry-latency-us = <100>;
+				exit-latency-us = <250>;
+				min-residency-us = <1900>;
+			};
+
+			mcusysoff: mcusysoff {
+				compatible = "arm,idle-state";
+				arm,psci-suspend-param = <0x01010002>;
+				local-timer-stop;
+				entry-latency-us = <300>;
+				exit-latency-us = <1200>;
+				min-residency-us = <2600>;
+			};
+
+			s2idle: s2idle {
+				compatible = "arm,idle-state";
+				arm,psci-suspend-param = <0x01010100>;
+				local-timer-stop;
+				entry-latency-us = <500>;
+				exit-latency-us = <1400>;
+				min-residency-us = <4294967295>;
+			};
+		};
+	};
+
+	clocks {
+		clk13m: clock-13m {
+			compatible = "fixed-clock";
+			#clock-cells = <0>;
+			clock-frequency = <13000000>;
+			clock-output-names = "clk13m";
+		};
+	
+		clk26m: clock-26m {
+			compatible = "fixed-clock";
+			#clock-cells = <0>;
+			clock-frequency = <26000000>;
+			clock-output-names = "clk26m";
+		};
+	};
+
+	timer: timer {	
+		compatible = "arm,armv8-timer";
+		interrupt-parent = <&gic>;
+		interrupts = <GIC_PPI 13 IRQ_TYPE_LEVEL_HIGH>,
+			     <GIC_PPI 14 IRQ_TYPE_LEVEL_HIGH>,
+			     <GIC_PPI 11 IRQ_TYPE_LEVEL_HIGH>,	
+			     <GIC_PPI 10 IRQ_TYPE_LEVEL_HIGH>;
+		clock-frequency = <13000000>;
+	};
+
+	pmu {
+		compatible = "arm,armv8-pmuv3";
+		interrupt-parent = <&gic>;
+		interrupts = <GIC_PPI 7 IRQ_TYPE_LEVEL_HIGH>;
+	};
+
+	pmu-dsu {
+		compatible = "arm,dsu-pmu";
+		cpus = <&cpu0>, <&cpu1>, <&cpu2>, <&cpu3>,
+		       <&cpu4>, <&cpu5>, <&cpu6>, <&cpu7>;
+		interrupts = <GIC_PPI 18 IRQ_TYPE_LEVEL_HIGH>;
+	};
+
+	psci {
+		compatible = "arm,psci-1.0";
+		method = "smc";
+	};
+
+	soc {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		compatible = "simple-bus";
+		ranges;
+
+		topckgen: clock-controller@10000000 {
+			compatible = "mediatek,mt6833-topckgen", "syscon";
+			reg = <0 0x10000000 0 0x1000>;
+			#clock-cells = <1>;
+		};
+
+		infracfg_ao: clock-controller@10001000 {
+			compatible = "mediatek,mt6833-infracfg-ao", "syscon";
+			reg = <0 0x10001000 0 0x1000>;
+			#clock-cells = <1>;
+		};
+
+		pericfg: pericfg@10003000 {
+			compatible = "mediatek,mt6833-pericfg", "syscon";
+			reg = <0 0x10003000 0 0x1000>;
+			#clock-cells = <1>;
+		};
+
+		scpsys: syscon@10006000 {
+			compatible = "mediatek,mt6833-scpsys", "syscon", "simple-mfd";
+			reg = <0 0x10006000 0 0x1000>;
+
+			spm: power-controller {
+				compatible = "mediatek,mt6833-power-controller";
+				#address-cells = <1>;
+				#size-cells = <0>;
+				#power-domain-cells = <1>;
+
+				mfg0: power-domain@MT6833_POWER_DOMAIN_MFG0 {
+					reg = <MT6833_POWER_DOMAIN_MFG0>;
+					clocks = <&topckgen CLK_TOP_MFG_PLL_SEL>,
+						 <&topckgen CLK_TOP_MFG_REF_SEL>;
+					clock-names = "mfg", "alt";
+					#address-cells = <1>;
+					#size-cells = <0>;
+					#power-domain-cells = <1>;
+
+					mfg1: power-domain@MT6833_POWER_DOMAIN_MFG1 {
+						reg = <MT6833_POWER_DOMAIN_MFG1>;
+						mediatek,infracfg = <&infracfg_ao>;
+						#address-cells = <1>;
+						#size-cells = <0>;
+						#power-domain-cells = <1>;
+
+						power-domain@MT6833_POWER_DOMAIN_MFG2 {
+							reg = <MT6833_POWER_DOMAIN_MFG2>;
+							#power-domain-cells = <0>;
+						};
+
+						power-domain@MT6833_POWER_DOMAIN_MFG3 {
+							reg = <MT6833_POWER_DOMAIN_MFG3>;
+							#power-domain-cells = <0>;
+						};
+					};
+				};
+			};
+		};
+		pio: pinctrl {
+			compatible = "mediatek,mt6833-pinctrl";
+			reg =  <0 0x10005000 0 0x1000>,
+			       <0 0x11e60000 0 0x1000>,
+			       <0 0x11d10000 0 0x1000>,
+			       <0 0x11d40000 0 0x1000>,
+			       <0 0x11e20000 0 0x1000>,
+			       <0 0x11ea0000 0 0x1000>,
+			       <0 0x11c30000 0 0x1000>,
+			       <0 0x1000b000 0 0x1000>;
+			reg-names = "gpio",
+			            "iocfg_bl",
+				    "iocfg_bm",
+				    "iocfg_br",
+				    "iocfg_lm",
+				    "iocfg_rt",
+				    "iocfg_rb",
+				    "eint";
+			gpio-controller;
+			#gpio-cells = <2>;
+			gpio-ranges = <&pio 0 0 201>;
+			interrupt-controller;
+			#interrupt-cells = <2>;
+			interrupts = <GIC_SPI 212 IRQ_TYPE_LEVEL_HIGH>;
+		};
+
+		wdt: watchdog@10007000 {
+			compatible = "mediatek,mt6833-wdt", "mediatek,mt8183-wdt";
+			reg = <0 0x10007000 0 0x1000>;
+		};
+
+		apmixedsys: clock-controller@1000c000 {
+			compatible = "mediatek,mt6833-apmixedsys", "syscon";
+			reg = <0 0x1000c000 0 0xe00>;
+			#clock-cells=<1>;
+		};
+
+		pwrap: pwrap@10026000 {
+			/*
+			 * The MT6873 wrapper is the same generation as the MT6833 one
+			 * and is what mainline has data for; the driver has no
+			 * mt6833 entry yet.
+			 */
+			compatible = "mediatek,mt6833-pwrap", "mediatek,mt6873-pwrap";
+			reg = <0 0x10026000 0 0x1000>;
+			reg-names = "pwrap";
+			interrupts = <GIC_SPI 220 IRQ_TYPE_LEVEL_HIGH>;
+			/*
+			 * Only the two APB gates are listed.  The vendor DT also adds
+			 * CLK_TOP_PWRAP_ULPOSC_SEL and CLK_TOP_OSC_D10 ("ulposc",
+			 * "ulposc_osc") and on paper the gates are useless without
+			 * them, because they only branch off fpwrap_ulposc_ck.  On
+			 * this board listing them makes the boot worse instead of
+			 * fixing the wrapper, so the tree keeps the combination that
+			 * is known to boot and the clock chain is poked from
+			 * userspace by hand (see 'pwclk' in the bring-up init).
+			 */
+			clocks = <&infracfg_ao CLK_IFRAO_PMIC_AP>,
+				 <&infracfg_ao CLK_IFRAO_PMIC_TMR>;
+			clock-names = "spi", "wrap";
+			status = "disabled";
+		};
+ 
+		gic: interrupt-controller@c000000 {
+			compatible = "arm,gic-v3";
+			#interrupt-cells = <3>;
+			interrupt-parent = <&gic>;
+			interrupts = <GIC_PPI 9 IRQ_TYPE_LEVEL_HIGH>;
+			interrupt-controller;
+			reg = <0 0xc000000 0 0x40000>, /* GICD */
+			      <0 0xc040000 0 0x200000>; /* GICR */
+
+			/* ppi-partitions {
+				ppi_cluster0: interrupt-partition-0 {
+					affinity = <&cpu0 &cpu1 &cpu2 &cpu3 &cpu4 &cpu5>;
+				};
+
+				ppi_cluster1: interrupt-partition-1 {
+					affinity = <&cpu6 &cpu7>;
+				};
+			};*/
+		};
+
+		sysirq: intpol-controller@c53a650 {
+			compatible = "mediatek,mt6833-sysirq", "mediatek,mt6577-sysirq";
+			interrupt-controller;
+			#interrupt-cells = <3>;
+			interrupt-parent = <&gic>;
+			reg = <0 0xc53a650 0 0x50>;	/* INTPOL */
+		};
+
+		uart0: serial@11002000 {
+			compatible = "mediatek,mt6833-uart", "mediatek,mt6577-uart";
+			reg = <0 0x11002000 0 0x1000>;
+			interrupts = <GIC_SPI 109 IRQ_TYPE_LEVEL_LOW>;
+			clocks = <&clk26m>; // <&infracfg_ao CLK_IFRAO_UART0>;
+			clock-names = "baud", "bus";
+			status = "disabled";
+		};
+
+		uart1: serial@11003000 {
+			compatible = "mediatek,mt6833-uart", "mediatek,mt6577-uart";
+			reg = <0 0x11003000 0 0x1000>;
+			interrupts = <GIC_SPI 110 IRQ_TYPE_LEVEL_LOW>;
+			clocks = <&clk26m>; // <&infracfg_ao CLK_IFRAO_UART1>;
+			clock-names = "baud", "bus";
+			status = "disabled";
+		};
+
+		imp_iic_wrap_c: clock-controller@11007000 {
+			compatible = "mediatek,mt6833-imp-iic-wrap-c", "syscon";
+			reg = <0 0x11007000 0 0x1000>;
+			#clock-cells=<1>;
+		};
+
+		usb2: usb@11200000 {
+			compatible = "mediatek,mt6833-musb", "mediatek,mtk-musb";
+			reg = <0 0x11200000 0 0x10000>;
+			interrupts = <GIC_SPI 96 IRQ_TYPE_LEVEL_HIGH>;
+			interrupt-names = "mc";
+			/*
+			 * The real clocks, now that the reason they crashed is
+			 * fixed.
+			 *
+			 * Enabling these made the board panic in the mtk_musb
+			 * initcall, which is what the old "the board does not boot
+			 * with the real ones" note was about.  The cause turned out
+			 * to be in clk-mt6833-apmixed.c, not here: it registered its
+			 * provider with the legacy of_clk_add_provider() +
+			 * of_clk_src_onecell_get() while handing over a
+			 * clk_hw_onecell_data, and the two structs put their
+			 * members in the opposite order -- so any apmixed clock
+			 * lookup indexed from the num field and faulted.  Fixed in
+			 * that driver, so CLK_APMIXED_USBPLL, which MUSB asks
+			 * for, now resolves.
+			 *
+			 * The 48 MHz SIE clock is a hard requirement for MUSB: with
+			 * 26 MHz fed to "main" the controller's registers sit in a
+			 * clock domain that is not running, and binding a gadget to
+			 * the UDC wedges the bus.
+			 */
+			clocks = <&infracfg_ao CLK_IFRAO_SSUSB>,
+				 <&apmixedsys CLK_APMIXED_USBPLL>,
+				 <&topckgen CLK_TOP_UNIVPLL_D5_D4>;
+			clock-names = "main",
+				      "mcu",
+				      "univpll";
+			/*
+			 * otg, not peripheral.
+			 *
+			 * Only MUSB_OTG makes mtk_musb_probe()'s musb->port_mode come out
+			 * as MUSB_OTG, and only then does mtk_otg_switch_init() run and
+			 * register the usb_role_switch.	 That matters because
+			 * phy_power_on(glue->phy) is called from inside that switch's
+			 * callback and from nowhere else: as a plain peripheral the PHY
+			 * stayed off, DEVCTL never reported VBUS, and the host saw no
+			 * device at all.
+			 *
+			 * CONFIG_USB_MUSB_DUAL_ROLE (not _GADGET) is what lets this
+			 * property be read instead of being overridden.
+			 */
+			dr_mode = "otg";
+			phys = <&u2port0 PHY_TYPE_USB2>;
+		};
+
+		audsys: clock-controller@11210000 {
+			compatible = "mediatek,mt6833-audsys", "syscon";
+			reg = <0 0x11210000 0 0x2000>;
+			#clock-cells = <1>;
+		};
+
+		u2phy: t-phy@11e40000 {
+			compatible = "mediatek,mt6833-tphy", "mediatek,generic-tphy-v2";
+			/* child addrs are 1 cell, parent (soc) addrs are 2 cells */
+			ranges = <0 0 0x11e40000 0x10000>;
+			#address-cells = <1>;
+			#size-cells = <1>;
+			status = "disabled";
+
+			u2port0: usb-phy@0 {
+				reg = <0x0 0x700>;
+				clocks = <&clk26m>;
+				clock-names = "ref";
+				#phy-cells = <1>;
+				status = "disabled";
+			};
+		};
+
+		mmc0: mmc@11230000 {
+			compatible = "mediatek,mt6833-mmc",
+			             "mediatek,mt8183-mmc";
+			reg = <0 0x11230000 0 0x10000>,
+			      <0 0x11f50000 0 0x1000>;
+			interrupts = <GIC_SPI 99 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&clk26m>, <&clk26m>, <&clk26m>;
+				/* <&topckgen CLK_TOP_MSDC50_0_SEL>,
+			           <&infracfg_ao CLK_IFRAO_MSDC0>,
+			           <&infracfg_ao CLK_IFRAO_MSDC0_SRC>, */
+			clock-names = "source", "hclk", "source_cg";
+			status = "disabled";
+		};
+
+		mmc1: mmc@11240000 {
+			compatible = "mediatek,mt6833-mmc",
+			             "mediatek,mt8183-mmc";
+			reg = <0 0x11240000 0 0x1000>,
+			      <0 0x11ef0000 0 0x1000>;
+			interrupts = <GIC_SPI 103 IRQ_TYPE_LEVEL_HIGH>;
+			/* BISECT: same revert as the USB node above */
+			clocks = <&clk26m>, <&clk26m>, <&clk26m>;
+			clock-names = "source", "hclk", "source_cg";
+			status = "disabled";
+		};
+
+		imp_iic_wrap_e: clock-controller@11cb1000 {
+			compatible = "mediatek,mt6833-imp-iic-wrap-e", "syscon";
+			reg = <0 0x11cb1000 0 0x1000>;
+			#clock-cells=<1>;
+		};
+
+		imp_iic_wrap_s: clock-controller@11d02000 {
+			compatible = "mediatek,mt6833-imp-iic-wrap-s", "syscon";
+			reg = <0 0x11d02000 0 0x1000>;
+			#clock-cells=<1>;
+		};
+
+		imp_iic_wrap_ws: clock-controller@11d23000 {
+			compatible = "mediatek,mt6833-imp-iic-wrap-ws", "syscon";
+			reg = <0 0x11d23000 0 0x1000>;
+			#clock-cells=<1>;
+		};
+
+		imp_iic_wrap_w: clock-controller@11e03000 {
+			compatible = "mediatek,mt6833-imp-iic-wrap-w", "syscon";
+			reg = <0 0x11e03000 0 0x1000>;
+			#clock-cells=<1>;
+		};
+
+		imp_iic_wrap_n: clock-controller@11f01000 {
+			compatible = "mediatek,mt6833-imp-iic-wrap-n", "syscon";
+			reg = <0 0x11f01000 0 0x1000>;
+			#clock-cells=<1>;
+		};
+
+		/*
+		 * The LCD bias + backlight chip (LM36273) sits on this bus, so it is
+		 * the one i2c controller this SoC has that is described in mainline.
+		 * Layout and clock ids are from the vendor DT (registers at
+		 * 0x11f00000, clock gate inside the I-N wrap, SPI 118 level high).
+		 */
+		i2c6: i2c@11f00000 {
+			/*
+			 * The vendor driver describes this IP as register set "ver 2"
+			 * with "dma_ver 1": the mt8183-generation v2 offsets
+			 * (CLOCK_DIV 0x48, FIFO_STAT 0xf4, DEBUGSTAT 0xe4, HS 0x30,
+			 * IO_CONFIG 0x34) plus the DMA handshake (CONTROL
+			 * DMAACK_EN|ASYNC_MODE, PDMA CON SKIP_CONFIG|ASYNC_MODE).
+			 * The dedicated mt6833 entry carries exactly that.
+			 */
+			compatible = "mediatek,mt6833-i2c";
+			reg = <0 0x11f00000 0 0x1000>,
+			      <0 0x10217580 0 0x80>;
+			interrupts = <GIC_SPI 118 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&imp_iic_wrap_n CLK_IMPN_AP_CLOCK_RO_I2C6>,
+				 <&infracfg_ao CLK_IFRAO_AP_DMA>;
+			clock-names = "main", "dma";
+			clock-div = <5>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "disabled";
+		};
+
+		/*
+		 * SPI1: carries the Novatek NT36672C touchscreen on evergo
+		 * (already the vendor assignment).  Three clocks as the mainline
+		 * mt65xx SPI driver expects: parent (MAINPLL_D5_D4), mux
+		 * (SPI_SEL) and the IFRAO gate.
+		 */
+		spi1: spi@11010000 {
+			compatible = "mediatek,mt6765-spi";
+			mediatek,pad-select = <0>;
+			reg = <0 0x11010000 0 0x1000>;
+			interrupts = <GIC_SPI 160 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&topckgen CLK_TOP_MAINPLL_D5_D4>,
+				 <&topckgen CLK_TOP_SPI_SEL>,
+				 <&infracfg_ao CLK_IFRAO_SPI1>;
+			clock-names = "parent-clk", "sel-clk", "spi-clk";
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "disabled";
+		};
+
+		gpu: gpu@13000000 {
+			compatible = "mediatek,mt6833-mali", "arm,mali-valhall-jm";
+			reg = <0 0x13000000 0 0x4000>;
+			interrupts =
+				<GIC_SPI 364 IRQ_TYPE_LEVEL_HIGH>,
+				<GIC_SPI 365 IRQ_TYPE_LEVEL_HIGH>,
+				<GIC_SPI 366 IRQ_TYPE_LEVEL_HIGH>,
+				<GIC_SPI 367 IRQ_TYPE_LEVEL_HIGH>,
+				<GIC_SPI 368 IRQ_TYPE_LEVEL_HIGH>;
+			interrupt-names = "gpu", "mmu", "job", "event", "power";
+
+			clocks = <&mfgcfg CLK_MFGCFG_BG3D>;
+			clock-names = "core";
+
+			power-domains = <&spm MT6833_POWER_DOMAIN_MFG2>,
+					<&spm MT6833_POWER_DOMAIN_MFG3>;
+			power-domain-names = "core0", "core1";
+
+			status = "disabled";
+		};
+
+		mfgcfg: clock-controller@13fbf000 {
+			compatible = "mediatek,mt6833-mfgcfg", "syscon";
+			reg = <0 0x13fbf000 0 0x1000>;
+			#clock-cells = <1>;
+		};
+
+		/*
+		 * GCE: the mmsys driver programs the display routing through it, and
+		 * mtk-drm uses it for command submission.  Same block as mt8183
+		 * (0x10228000 + 0x4000, SPI 203), per the vendor DT.
+		 */
+		gce: mailbox@10228000 {
+			compatible = "mediatek,mt6833-gce";
+			reg = <0 0x10228000 0 0x4000>;
+			interrupts = <GIC_SPI 203 IRQ_TYPE_LEVEL_LOW>;
+			#mbox-cells = <3>;
+			#gce-event-cells = <1>;
+			#gce-subsys-cells = <2>;
+			clocks = <&infracfg_ao CLK_IFRAO_GCE>;
+			clock-names = "gce";
+		};
+
+		mmsys: syscon@14000000 {
+			compatible = "mediatek,mt6833-mmsys", "syscon";
+			reg = <0 0x14000000 0 0x1000>;
+			#clock-cells = <1>;
+			mboxes = <&gce 0 CMDQ_THR_PRIO_HIGHEST>,
+				 <&gce 1 CMDQ_THR_PRIO_HIGHEST>;
+			mediatek,gce-client-reg = <&gce SUBSYS_1400XXXX 0 0x1000>;
+
+			port {
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				mmsys_ep_main: endpoint@0 {
+					reg = <0>;
+					remote-endpoint = <&ovl0_in>;
+				};
+			};
+		};
+
+		/*
+		 * The display pipeline is OVL0 -> RDMA0 -> DSI0: the bypass-PQ
+		 * path, which is also the scoring path the vendor's
+		 * DDP_SCENARIO_PRIMARY_BYPASS_PQ / _RDMA0_DISP scenarios use.
+		 * The drivers walk these port graphs to build the DDP path.
+		 */
+		disp_mutex0: mutex@14001000 {
+			compatible = "mediatek,mt6833-disp-mutex";
+			reg = <0 0x14001000 0 0x1000>;
+			mediatek,gce-client-reg = <&gce SUBSYS_1400XXXX 0x1000 0x1000>;
+			mediatek,gce-events = <CMDQ_EVENT_MUTEX_STREAM_DONE0>;
+			interrupts = <GIC_SPI 253 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&mmsys CLK_MM_DISP_MUTEX0>;
+			status = "disabled";
+		};
+
+		disp_ovl0: ovl@14005000 {
+			compatible = "mediatek,mt6833-disp-ovl";
+			reg = <0 0x14005000 0 0x1000>;
+			mediatek,gce-client-reg = <&gce SUBSYS_1400XXXX 0x5000 0x1000>;
+			interrupts = <GIC_SPI 255 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&mmsys CLK_MM_DISP_OVL0>;
+			status = "disabled";
+
+			ports {
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				port@0 {
+					reg = <0>;
+					ovl0_in: endpoint {
+						remote-endpoint = <&mmsys_ep_main>;
+					};
+				};
+
+				port@1 {
+					reg = <1>;
+					ovl0_out: endpoint {
+						remote-endpoint = <&rdma0_in>;
+					};
+				};
+			};
+		};
+
+		disp_rdma0: rdma@14007000 {
+			compatible = "mediatek,mt6833-disp-rdma";
+			reg = <0 0x14007000 0 0x1000>;
+			mediatek,gce-client-reg = <&gce SUBSYS_1400XXXX 0x7000 0x1000>;
+			interrupts = <GIC_SPI 257 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&mmsys CLK_MM_DISP_RDMA0>;
+			/* the vendor's video-mode FIFO size for this SoC */
+			mediatek,rdma-fifo-size = <2240>;
+			status = "disabled";
+
+			ports {
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				port@0 {
+					reg = <0>;
+					rdma0_in: endpoint {
+						remote-endpoint = <&ovl0_out>;
+					};
+				};
+
+				port@1 {
+					reg = <1>;
+					rdma0_out: endpoint {
+						remote-endpoint = <&dsi_in>;
+					};
+				};
+			};
+		};
+
+		/*
+		 * C-PHY: the evergo panels are driven as three trios with no clock
+		 * lane, which is why the PHY uses the mt6833-mipi-tx-cphy driver
+		 * and not the D-PHY data of the same register file.
+		 */
+		mipi_tx0: dsi-phy@11e50000 {
+			compatible = "mediatek,mt6833-mipi-tx-cphy";
+			reg = <0 0x11e50000 0 0x1000>;
+			clocks = <&clk26m>;
+			clock-output-names = "mipi_tx0_pll";
+			#clock-cells = <0>;
+			#phy-cells = <0>;
+			status = "disabled";
+		};
+
+		dsi0: dsi@14013000 {
+			compatible = "mediatek,mt6833-dsi";
+			reg = <0 0x14013000 0 0x1000>;
+			mediatek,gce-client-reg = <&gce SUBSYS_1401XXXX 0x3000 0x1000>;
+			interrupts = <GIC_SPI 269 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&mmsys CLK_MM_DSI0>,
+				 <&mmsys CLK_MM_DSI0_DSI_CK_DOMAIN>,
+				 <&mipi_tx0>;
+			clock-names = "engine", "digital", "hs";
+			phys = <&mipi_tx0>;
+			phy-names = "dphy";
+			status = "disabled";
+
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			ports {
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				port@0 {
+					reg = <0>;
+					dsi_in: endpoint {
+						remote-endpoint = <&rdma0_out>;
+					};
+				};
+
+				port@1 {
+					reg = <1>;
+					dsi_out: endpoint { };
+				};
+			};
+		};
+
+		imgsys1: clock-controller@15020000 {
+			compatible = "mediatek,mt6833-imgsys1", "syscon";
+			reg = <0 0x15020000 0 0x1000>;
+			#clock-cells=<1>;
+		};
+
+		imgsys2: clock-controller@15820000 {
+			compatible = "mediatek,mt6833-imgsys2", "syscon";
+			reg = <0 0x15820000 0 0x1000>;
+			#clock-cells=<1>;
+		};
+
+		vdec_gcon: clock-controller@1602f000 {
+			compatible = "mediatek,mt6833-vdec-gcon", "syscon";
+			reg = <0 0x1602f000 0 0x1000>;
+			#clock-cells=<1>;
+		};
+
+		venc_gcon: clock-controller@17000000 {
+			compatible = "mediatek,mt6833-venc-gcon", "syscon";
+			reg = <0 0x17000000 0 0x10000>;
+			#clock-cells=<1>;
+		};
+
+		camsys_main: clock-controller@1a000000 {
+			compatible = "mediatek,mt6833-camsys-main", "syscon";
+			reg = <0 0x1a000000 0 0x1000>;
+			#clock-cells=<1>;
+		};
+
+		camsys_rawa: clock-controller@1a04f000 {
+			compatible = "mediatek,mt6833-camsys-rawa", "syscon";
+			reg = <0 0x1a04f000 0 0x1000>;
+			#clock-cells=<1>;
+		};
+
+		camsys_rawb: clock-controller@1a06f000 {
+			compatible = "mediatek,mt6833-camsys-rawb", "syscon";
+			reg = <0 0x1a06f000 0 0x1000>;
+			#clock-cells=<1>;
+		};
+
+		ipesys: clock-controller@1b000000 {
+			compatible = "mediatek,mt6833-ipesys", "syscon";
+			reg = <0 0x1b000000 0 0x1000>;
+			#clock-cells=<1>;
+		};
+
+		mdpsys_clk: clock-controller@1f000000 {
+			compatible = "mediatek,mt6833-mdpsys", "syscon";
+			reg = <0 0x1f000000 0 0x1000>;
+			#clock-cells=<1>;
+		};
+
+		ufsphy: ufs-phy@11fa0000 {
+			compatible = "mediatek,mt6833-ufsphy", 
+				     "mediatek,mt8183-ufsphy";
+			reg = <0 0x11fa0000 0 0xc000>;
+			clocks = <&clk26m>, <&clk26m>;
+			clock-names = "unipro", "mp";
+			#phy-cells = <0>;
+			status = "disabled";
+		};
+
+		ufs: ufs@11270000 {
+			compatible = "mediatek,mt6833-ufshci", "mediatek,mt8183-ufshci";
+			reg = <0 0x11270000 0 0x2300>;
+			phys = <&ufsphy>;
+			interrupts = <GIC_SPI 105 IRQ_TYPE_LEVEL_HIGH>;
+
+			clocks =
+				<&infracfg_ao CLK_IFRAO_UFS>,
+				<&infracfg_ao CLK_IFRAO_UNIPRO_SYSCLK>,
+				<&infracfg_ao CLK_IFRAO_UFS_MP_SAP_BCLK>,
+				<&infracfg_ao CLK_IFRAO_AES>,
+				<&topckgen CLK_TOP_AES_UFSFDE_SEL>,
+				<&topckgen CLK_TOP_UNIVPLL_D6>,
+				<&topckgen CLK_TOP_MAINPLL_D4>;
+
+			clock-names =
+				"ufs-clk",
+				"ufs-unipro-clk",
+				"ufs-mp-clk",
+				"ufs-crypto-clk",
+				"ufs-vendor-crypto-clk-mux",
+				"ufs-vendor-crypto-normal-parent-clk",
+				"ufs-vendor-crypto-perf-parent-clk";
+
+			freq-table-hz =
+				<0 0>,
+				<0 0>,
+				<0 0>,
+				<0 0>,
+				<0 0>,
+				<0 0>,
+				<0 0>;
+
+			/*
+			 * This controller is the pre-MCQ "legacy IP" (the driver logs
+			 * "legacy IP version - 0x20160706, is legacy : 1"), so it has one
+			 * doorbell and no multi-circular-queue.  Without this flag
+			 * ufs_mtk_init_host_caps() leaves host->caps at 0x0, which means
+			 * UFS_MTK_CAP_DISABLE_MCQ is clear, which means
+			 * UFSHCD_QUIRK_BROKEN_LSDBS_CAP is never set -- and the core then
+			 * trusts the LSDBS_SUPPORT bit it reads out of the CAPABILITIES
+			 * register, concludes that legacy single doorbell has been removed,
+			 * and aborts probe with -EINVAL:
+			 *
+			 *   ufshcd_add_scsi_host: failed to initialize
+			 *          (legacy doorbell mode not supported)
+			 *
+			 * The quirk exists precisely because that register field is not
+			 * meaningful on older IP, so it makes the core assume legacy
+			 * doorbell is available instead.  It also stops the driver from
+			 * asking for queue IRQs that this board does not route
+			 * ("error -ENXIO: IRQ index 1 not found").  mt8195.dtsi sets the
+			 * same property.
+			 */
+			mediatek,ufs-disable-mcq;
+
+			/*
+			 * MT6833 keeps only VCC under software control (the MT6359's
+			 * VEMC rail); VCCQ/VCCQ2 are fed by an always-on external LDO.
+			 *
+			 * The node to point at is ldo_vemc_1, not ldo_vemc: the evergo
+			 * PMIC is an MT6359P (chip code 0x5920), and mt6359-regulator.c
+			 * picks its descriptor table by reading MT6359P_HWCID rather than
+			 * by compatible.  The MT6359P table registers VEMC under the name
+			 * "ldo_vemc_1"; the plain-MT6359 table's "ldo_vemc" is the one
+			 * mt6359.dtsi defines but nothing ever binds it.  Pointing vcc at
+			 * that orphan made devm_regulator_get("vcc") return -EPROBE_DEFER
+			 * forever -- the regulator node exists, so the core defers instead
+			 * of falling back, and UFS could never probe.
+			 */
+			vcc-supply = <&mt6359_vemc_1_ldo_reg>;
+			status = "disabled";
+		};
+
+		/*iommu0: m4u@14016000 {
+			compatible = "mediatek,iommu_v0";
+			reg = <0 0x14016000 0 0x1000>;
+			mediatek,larbs = <&smi_larb0 &smi_larb1 &smi_larb2>,
+					 <&smi_larb4 &smi_larb7 &smi_larb9>,
+					 <&smi_larb11 &smi_larb13 &smi_larb14>,
+					 <&smi_larb16 &smi_larb17 &smi_larb14>,
+					 <&smi_larb19 &smi_larb20>;
+			interrupts = <GIC_SPI 271 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&mmsys_config CLK_MM_SPI_IOMMU>,
+				 <&scpsys SCP_SYS_DIS>;
+			clock-names = "disp-iommu-ck",
+				      "power";
+			#iommu-cells = <1>;
+		}; */
+	};
+};
+

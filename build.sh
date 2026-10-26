@@ -151,14 +151,20 @@ print(f"  usb      -> high-speed")
 print(f"  bootargs -> loglevel=4, watchdog_thresh=30, no softlockup_panic")
 PY
 
-# upstream's main port commit is missing this header, so dtbs would fail with
-#   fatal error: dt-bindings/pinctrl/mediatek,mt6833-pinfunc.h: No such file
-# install the vendored copy if the tree does not have it
-PINHDR="$L/include/dt-bindings/pinctrl/mediatek,mt6833-pinfunc.h"
-if [ ! -f "$PINHDR" ] && [ -f "$HERE/config/pinctrl/mediatek,mt6833-pinfunc.h" ]; then
-    mkdir -p "$(dirname "$PINHDR")"
-    cp "$HERE/config/pinctrl/mediatek,mt6833-pinfunc.h" "$PINHDR"
-    echo "  installed the missing mt6833-pinfunc.h from config/pinctrl"
+# Upstream main's port commit is incomplete: its mt6833.dtsi includes dt-bindings
+# headers the repository does not contain at all -
+#   dt-bindings/gce/mediatek,mt6833-gce.h
+#   dt-bindings/memory/mt6833-larb-port.h
+#   dt-bindings/reset/mediatek,mt6833-resets.h
+# so dtbs cannot succeed from that tree. The port files from the last complete tree
+# (cb9ba2ee, which was built and booted on hardware) are vendored under config/port
+# and installed over whatever upstream ships. They do not reference those headers.
+if [ -d "$HERE/config/port" ]; then
+    ( cd "$HERE/config/port" && find . -type f -print ) | sed 's|^\./||' | while read -r f; do
+        mkdir -p "$L/$(dirname "$f")"
+        cp -f "$HERE/config/port/$f" "$L/$f"
+    done
+    echo "  installed $(find "$HERE/config/port" -type f | wc -l) vendored port files"
 fi
 
 say "build dtb + kernel"

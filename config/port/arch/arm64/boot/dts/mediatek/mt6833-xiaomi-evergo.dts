@@ -1,0 +1,588 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * Device Tree Source for Xiaomi Redmi Note 11 5G (evergo)
+ *
+ * The MT6833 SoC support (mt6833.dtsi, pinctrl and clock drivers) was
+ * brought up in mainline for the Xiaomi Poco M3 Pro 5G (camellia) by
+ * Ryo "evilMyQueen" Yamada <evilMyQueen@mainlining.org>; this file ports
+ * that bring-up to the evergo.
+ *
+ * Current state: this is a bring-up tree. The UART console works, while
+ * the SD card and USB still need the topckgen/infracfg clocks and the
+ * pwrap/PMIC (MT6359) support that are not wired up yet.
+ */
+
+/dts-v1/;
+
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/input.h>
+#include <dt-bindings/interrupt-controller/irq.h>
+#include <dt-bindings/pinctrl/mediatek,mt6833-pinfunc.h>
+
+#include "mt6833.dtsi"
+#include "mt6359.dtsi"
+
+/ {
+	chassis-type = "handset";
+	compatible = "xiaomi,evergo", "mediatek,mt6833";
+	model = "Xiaomi Redmi Note 11 5G";
+
+	aliases {
+		serial0 = &uart0;
+	};
+
+	chosen {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+
+		/*
+		 * UART0 is the only reliable observation point during
+		 * bring-up, so the console is kept on it.
+		 *
+		 * initcall_blacklist: an early build died inside
+		 * exynos4_pm_init_power_domain (an Exynos PM-domain driver that
+		 * has no business probing on MT6833, but does - the DT must be
+		 * matching one of its compatibles) and never returned from it.
+		 * Skipping that one initcall costs nothing here and tells us
+		 * whether the rest of the boot can get past 0.31s.
+		 */
+		/*
+		 * b268: weston's KMS dumb buffers are carved out of the CMA
+		 * pool; one 1080x2400x4 frame is ~10.4 MB, and after fbcon
+		 * took its own buffer the 32 MB default left nothing, so the
+		 * first weston surface died with
+		 *   KMS: DRM_IOCTL_MODE_CREATE_DUMB failed: Out of memory
+		 * 256 MB is comfortable on this 8 GiB unit.
+		 */
+		bootargs = "earlycon=mtk8250,0x11002000 console=evenring console=ttyS0,921600n8 console=tty0 loglevel=4 printk.devkmsg=on clk_ignore_unused pd_ignore_unused regulator_ignore_unused panic=10 watchdog_thresh=30 initcall_blacklist=exynos4_pm_init_power_domain fbcon=nodefer cma=256M";
+		stdout-path = "serial0:921600n8";
+	};
+
+	/*
+	 * LK reports the DRAM it trained in /memory of the DT it hands over;
+	 * this unit is an 8 GiB one. Keep this in sync with the variant in use
+	 * (4/6/8 GiB evergo variants exist).
+	 */
+	memory: memory@40000000 {
+		device_type = "memory";
+		reg = <0 0x40000000 0x1 0x80000000>;   /* 6 GiB on this unit (4/6/8 GiB variants exist) */
+	};
+
+	/*
+	 * The regions below match exactly what the MT6833 LK of the evergo
+	 * injects into the DT it hands to the kernel (its mblock-N-* entries,
+	 * dumped from a running device). Do not change them lightly: a wrong
+	 * TEE/ATF/GZ region makes the kernel die before the console is up.
+	 * The LK also fixes up the DRAM size in /memory.
+	 */
+	reserved-memory {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+
+		dpm_reserved: memory@ffe60000 {
+			reg = <0 0xffe60000 0 0x190000>;
+			no-map;
+		};
+
+		/* Framebuffer shared with the bootloader (LK) */
+		framebuffer_reserved: memory@7c610000 {
+			reg = <0 0x7c610000 0 0x1df0000>;
+		};
+
+		minirdump: memory@48170000 {
+			reg = <0 0x48170000 0 0x10000>;
+			no-map;
+		};
+
+		/*
+		 * LK keeps its AEE/ramoops buffer here; this is our only way to see
+		 * kernel output after a crash (read /sys/fs/pstore on the next boot).
+		 */
+		/*
+		 * Pstore/ramoops console area. The MTK LK copies it into the expdb
+		 * partition on the next boot, which is the only way to read kernel
+		 * output on a board without UART. The first bytes are also used for
+		 * early breadcrumbs by arch/arm64/kernel/setup.c before the ramoops
+		 * driver exists.
+		 *
+		 * Same zones as the vendor kernel asks for on its command line
+		 * (console 0x40000 then pmsg 0x10000, no record-size: that would
+		 * shift both), so the layout matches what Android expects as well.
+		 */
+		ramoops@48090000 {
+			compatible = "ramoops";
+			reg = <0 0x48090000 0 0xe0000>;
+			no-map;
+			console-size = <0x40000>;
+			pmsg-size = <0x10000>;
+		};
+
+		aee_debug_kinfo: memory@48080000 {
+			reg = <0 0x48080000 0 0x10000>;
+			no-map;
+		};
+
+		picachu: memory@bfd00000 {
+			reg = <0 0xbfd00000 0 0x80000>;
+			no-map;
+		};
+
+		mcupm_reserved: memory@7f500000 {
+			reg = <0 0x7f500000 0 0x100000>;
+			no-map;
+		};
+
+		tee_reserved: memory@70000000 {
+			reg = <0 0x70000000 0 0x5b00000>;
+			no-map;
+		};
+
+		tee_ree_reserved: memory@7e400000 {
+			reg = <0 0x7e400000 0 0xc00000>;
+			no-map;
+		};
+
+		tee_log_reserved: memory@bfc00000 {
+			reg = <0 0xbfc00000 0 0x20000>;
+			no-map;
+		};
+
+		sspm_reserved: memory@7feb0000 {
+			reg = <0 0x7feb0000 0 0x100000>;
+			no-map;
+		};
+
+		tee_secmem: memory@7f000000 {
+			reg = <0 0x7f000000 0 0x400000>;
+			no-map;
+		};
+
+		atf_log_reserved: memory@bfe00000 {
+			reg = <0 0xbfe00000 0 0x40000>;
+			no-map;
+		};
+
+		atf_ramdump_reserved: memory@bff80000 {
+			reg = <0 0xbff80000 0 0x80000>;
+			no-map;
+		};
+
+		atf_reserved: memory@48c00000 {
+			reg = <0 0x48c00000 0 0x200000>;
+			no-map;
+		};
+
+		log_store: memory@7ffbf000 {
+			reg = <0 0x7ffbf000 0 0x40000>;
+		};
+
+		gz_log: memory@7f400000 {
+			reg = <0 0x7f400000 0 0x41000>;
+		};
+
+		gz: memory@7f600000 {
+			reg = <0 0x7f600000 0 0x800000>;
+			no-map;
+		};
+
+		emi_mbist_buf: memory@7ffff000 {
+			reg = <0 0x7ffff000 0 0x1000>;
+			no-map;
+		};
+
+		/* DDR rank markers reserved by LK */
+		dramc_rk0: memory@13ffff000 {
+			reg = <1 0x3ffff000 0 0x1000>;
+			no-map;
+		};
+
+		dramc_rk1: memory@23ffff000 {
+			reg = <2 0x3ffff000 0 0x1000>;
+			no-map;
+		};
+	};
+
+	/*
+	 * FIXME: the MT6359 is not available yet (the MT6833 pwrap is not
+	 * supported by the mainline driver), so the SD card supplies are
+	 * modelled as always-on fixed regulators. This only allows
+	 * high-speed modes until the PMIC regulators are wired up.
+	 */
+	mt6359_vmch_fixed_reg: regulator-vmch {
+		compatible = "regulator-fixed";
+		regulator-name = "vmch";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+		regulator-enable-ramp-delay = <60>;
+		regulator-always-on;
+	};
+
+	mt6359_vmc_fixed_reg: regulator-vmc {
+		compatible = "regulator-fixed";
+		regulator-name = "vmc";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+		regulator-enable-ramp-delay = <60>;
+		regulator-always-on;
+	};
+};
+
+/*
+ * PMIC: the MT6359(P) sits behind the MT6833 PMIC wrapper and is described
+ * by mt6359.dtsi. Its interrupt line is wired to GPIO118 on the evergo
+ * (taken from the vendor DT); the wrapper's own interrupt is on SPI 220.
+ */
+&pwrap {
+	status = "okay";
+};
+
+&pmic {
+	interrupts-extended = <&pio 118 IRQ_TYPE_LEVEL_HIGH>;
+};
+
+/*
+ * SD card slot. 4-bit bus, high-speed only for now: on this board VMMC/VQMMC
+ * are the MT6360's LDO5/LDO3, which mainline has no driver for yet, so they
+ * are modelled as always-on fixed regulators. That also keeps the UHS modes
+ * out of reach, as they need a switchable 1.8 V VQMMC.
+ */
+&mmc1 {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&mmc1_pins_default>;
+	bus-width = <4>;
+	max-frequency = <50000000>;
+	cap-sd-highspeed;
+	no-sdio;
+	no-mmc;
+	/* FIXME: verify the card detect pin on the evergo */
+	broken-cd;
+	vmmc-supply = <&mt6359_vmch_fixed_reg>;
+	vqmmc-supply = <&mt6359_vmc_fixed_reg>;
+};
+
+/*
+ * UFS: enabled on purpose - this is step one of the bring-up, now that the
+ * rest of the port is stable enough to survive a failure and tell us about it.
+ *
+ * Two things have changed since b73 was killed by this:
+ *
+ *  - LK's own log shows it brings the link up on this board already:
+ *    "[UFS] ufs id: H9HQ21AFAMADAR", "RX HS-G3, setting is 3",
+ *    "TX HS-G3, setting is 3", "HS-G3-2, 1 lane".  So the rails, the hardware
+ *    and the vendor's timing sequence are known good.  What is new here is
+ *    the mainline ufs-mediatek driver, which matches this controller only
+ *    through its mt8183 fallback (the driver's table has mt8183 and mt8195 but
+ *    no mt6833) and therefore runs mt8183 register paths on an mt6833.
+ *  - The tick-2 SIGBUS that used to kill init is fixed, so a hang here no
+ *    longer hides behind it, and the log survives far enough to name the step
+ *    that broke.
+ *
+ * If the probe hangs, the ring frames LK flushes on the next boot will show
+ * the last thing the driver did.  That is the point of this build.
+ */
+&ufsphy {
+	status = "okay";
+};
+
+&ufs {
+	status = "okay";
+};
+
+&pio {
+	mmc1_pins_default: mmc1-pins-default-state {
+		pins-clk {
+			pinmux = <PINMUX_GPIO125__FUNC_MSDC1_CLK>;
+			drive-strength = <3>;
+			bias-pull-down = <MTK_PUPD_SET_R1R0_10>;
+		};
+
+		pins-cmd-dat {
+			pinmux = <PINMUX_GPIO128__FUNC_MSDC1_DAT0>,
+				 <PINMUX_GPIO127__FUNC_MSDC1_DAT1>,
+				 <PINMUX_GPIO129__FUNC_MSDC1_DAT2>,
+				 <PINMUX_GPIO130__FUNC_MSDC1_DAT3>,
+				 <PINMUX_GPIO126__FUNC_MSDC1_CMD>;
+			input-enable;
+			drive-strength = <3>;
+			bias-pull-up = <MTK_PUPD_SET_R1R0_01>;
+		};
+	};
+};
+
+&usb2 {
+	status = "okay";
+	/*
+	 * otg, matching the SoC dtsi -- this line used to say "peripheral" and
+	 * that silently overrode it, because this file is included after
+	 * mt6833.dtsi and the later property wins.
+	 *
+	 * The consequence was not obvious: with dr_mode = peripheral the mediatek
+	 * musb glue comes up as MUSB_PERIPHERAL, mtk_musb_init() therefore skips
+	 * mtk_otg_switch_init(), and no usb_role_switch is registered at all --
+	 * /sys/class/usb_role stays empty, so there is no way to drive the role
+	 * (and hence the PHY's power-on path through the role callback) from
+	 * userspace.
+	 */
+	/*
+	 * full-speed, not high-speed.
+	 *
+	 * The glue now passes this on to musb as config->maximum_speed, which is
+	 * what decides whether musb_start() enables high speed at all.  With high
+	 * speed enabled the controller latched POWER.HSMODE (a leftover from the
+	 * bootloader's own high-speed download mode) and musb told the gadget
+	 * layer it was on a 480 Mbps link - so the gadget advertised 512-byte
+	 * bulk endpoints on a link that had negotiated 12 Mbps, and Windows
+	 * refused to start the device.  The high-speed attach on this board also
+	 * looks marginal: BABBLE interrupts were showing up during enumeration,
+	 * which is data-line trouble, and matches the descriptor exchange
+	 * working one attempt and failing the next.
+	 *
+	 * A CDC-ACM console at 115200 baud does not need more than 12 Mbps.
+	 */
+	dr_mode = "otg";
+	maximum-speed = "high-speed";
+};
+
+&u2phy {
+	status = "okay";
+};
+
+&u2port0 {
+	status = "okay";
+};
+
+&uart0 {
+	status = "okay";
+};
+
+/*
+ * PMIC: reverted for the bring-up bisect. The pwrap/MT6359 nodes (and the
+ * real clock wiring) come back once the kernel boots again.
+ */
+
+/*
+ * Display: the K16A panel is driven as 3-trio C-PHY (no clock lane), so the
+ * DSI node selects C-PHY mode and hands over the panel module's own LP/HS
+ * cycle counts (11/35/26) for the C-PHY blanking maths.  The bias and
+ * backlight chip (LM36273) lives on i2c6.
+ */
+&i2c6 {
+	status = "okay";
+	clock-frequency = <400000>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&i2c6_pins>;
+
+	lm36273: backlight@11 {
+		compatible = "mediatek,i2c_lcd_bias";
+		reg = <0x11>;
+
+		/*
+		 * Chip + panel DVDD.  The vendor's panel driver enables this
+		 * rail (1.3 V) before its first I2C access; without it the
+		 * chip does not even ACK on the bus (an all-NACK sweep).
+		 */
+		vdd-supply = <&mt6359_vcn13_ldo_reg>;
+		/*
+		 * Vendor "lcm-bl-enable" pin, driven high right before the
+		 * first LM36273 register access.  Done with a pinctrl state
+		 * instead of a consumer gpio: gpiod lookups on this tree never
+		 * resolve (probe stuck in -EPROBE_DEFER forever, log said
+		 * "deferred probe pending: lm36273-backlight: enable gpio").
+		 */
+		pinctrl-names = "default";
+		pinctrl-0 = <&lm36273_bl_en>;
+	};
+};
+
+/*
+ * Touchscreen: Novatek NT36672C on SPI1 (vendor wiring: CLK=GPIO27,
+ * CSB=GPIO28, MO=GPIO29, MI=GPIO30, reset=GPIO13, irq=GPIO14).  The driver
+ * is the mainline adaptation of the vendor NT36672C driver, expecting the
+ * vendor "novatek,*" properties.
+ */
+&spi1 {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&spi1_pins_default>;
+
+	novatek@0 {
+		compatible = "novatek,NVT-ts-spi";
+		reg = <0>;
+		spi-max-frequency = <9600000>;
+
+		/*
+		 * CS timing for the NT36672C.  The vendor driver fed the
+		 * controller cs_setuptime=30 / cs_holdtime=25 / cs_idletime=5
+		 * ticks through its private controller_data; the mainline
+		 * controller takes these standard properties instead.  Values
+		 * are rounded up for the ~54.6 MHz SPI source clock
+		 * (mainpll/20, ~18.3 ns/tick).
+		 */
+		spi-cs-setup-delay-ns = <546>;
+		spi-cs-hold-delay-ns = <455>;
+		spi-cs-inactive-delay-ns = <91>;
+
+		/* irq = GPIO14.  The controller pulses INT low when a packet is
+		 * ready, so a falling edge gives exactly one interrupt per packet.
+		 * A level trigger storms (~8000/s), a rising edge never fires. */
+		interrupt-parent = <&pio>;
+		interrupts = <14 IRQ_TYPE_EDGE_FALLING>;
+		irq-gpios = <&pio 14 GPIO_ACTIVE_LOW>;
+
+		novatek,reset-gpio = <&pio 13 GPIO_ACTIVE_LOW>;
+		reset-gpios = <&pio 13 GPIO_ACTIVE_LOW>;
+		novatek,irq-gpio = <&pio 14 GPIO_ACTIVE_LOW>;
+		novatek,swrst-n8-addr = <0x03F0FE>;
+		novatek,spi-rd-fast-addr = <0x03F310>;
+
+		pinctrl-names = "default", "reset_low";
+		pinctrl-0 = <&touch_pins_default>;
+		pinctrl-1 = <&touch_reset_low>;
+	};
+};
+
+&pio {
+	i2c6_pins: i2c6-pins {
+		/*
+		 * MTK i2c pads need their internal pull-up.  With bias-disable
+		 * the bus never goes high, the controller waits for a free bus
+		 * forever (START stays set, no interrupt ever fires) and every
+		 * transfer times out.
+		 */
+		pins-scl {
+			pinmux = <PINMUX_GPIO109__FUNC_SCL6>;
+			bias-pull-up;
+		};
+
+		pins-sda {
+			pinmux = <PINMUX_GPIO110__FUNC_SDA6>;
+			bias-pull-up;
+		};
+	};
+
+        /* vendor "lcm-bl-enable" (pin 87), for the LM36273 backlight chip */
+        lm36273_bl_en: lm36273-bl-en {
+                pins {
+                        pinmux = <PINMUX_GPIO87__FUNC_GPIO87>;
+                        output-high;
+                };
+        };
+
+        /* SPI1 pads for the NT36672C touchscreen (vendor pinmux table) */
+        spi1_pins_default: spi1-pins {
+                pins-spi {
+                        pinmux = <PINMUX_GPIO27__FUNC_SPI1_CLK>,
+                                 <PINMUX_GPIO28__FUNC_SPI1_CSB>,
+                                 <PINMUX_GPIO29__FUNC_SPI1_MO>,
+                                 <PINMUX_GPIO30__FUNC_SPI1_MI>;
+                        drive-strength = <2>;
+                };
+        };
+
+        /* touch reset = GPIO13 (driven high = released), irq = GPIO14 */
+        touch_pins_default: touch-pins {
+                pins-rst {
+                        pinmux = <PINMUX_GPIO13__FUNC_GPIO13>;
+                        output-high;
+                };
+                pins-irq {
+                        pinmux = <PINMUX_GPIO14__FUNC_GPIO14>;
+                        bias-pull-up;
+                };
+        };
+
+        /* reset-pulse state -- pull TP_RST (GPIO13) low */
+        touch_reset_low: touch-reset-low {
+                pins-rst {
+                        pinmux = <PINMUX_GPIO13__FUNC_GPIO13>;
+                        output-low;
+                };
+        };
+};
+
+&disp_mutex0 {
+	status = "okay";
+};
+
+&disp_ovl0 {
+	status = "okay";
+};
+
+&disp_rdma0 {
+	status = "okay";
+};
+
+&mipi_tx0 {
+	status = "okay";
+};
+
+&dsi0 {
+	status = "okay";
+
+	mediatek,cphy;
+	mediatek,hs-prpr = <11>;
+	mediatek,hs-zero = <35>;
+	mediatek,hs-trail = <26>;
+
+	/*
+	 * This unit carries the CSOT module - LK reports "we will use lcm:
+	 * k16a_42_02_0b_vdo".  A Tianma unit uses the same node with
+	 * compatible = "k16a_36_02_0a_vdo,lcm" instead.
+	 *
+	 * lcd_dvdd (MT6359 VCN13) is left out on purpose: the driver treats it
+	 * as optional so the panel can come up while the PMIC side is still in
+	 * progress.
+	 */
+	panel@0 {
+		compatible = "k16a_36_02_0a_vdo,lcm";
+		reg = <0>;
+
+		backlight = <&lm36273>;
+
+		pm-enable-gpios = <&pio 136 GPIO_ACTIVE_HIGH>;
+		lcm-bl-enable-gpios = <&pio 87 GPIO_ACTIVE_HIGH>;
+		reset-gpios = <&pio 86 GPIO_ACTIVE_HIGH>;
+		bias-gpios = <&pio 137 GPIO_ACTIVE_HIGH>,
+			     <&pio 138 GPIO_ACTIVE_HIGH>;
+
+		port {
+			panel_in: endpoint {
+				remote-endpoint = <&dsi_out>;
+			};
+		};
+	};
+};
+
+&dsi_out {
+	remote-endpoint = <&panel_in>;
+};
+
+&gpu {
+	status = "okay";
+
+	/*
+	 * Vendor GPU rails on this board (MT6359): VPROC1 buck is the GPU
+	 * core rail (vendor _vgpu), VSRAM_MD LDO the GPU SRAM one
+	 * (vendor _vsram_gpu).
+	 */
+	mali-supply = <&mt6359_vproc1_buck_reg>;
+	sram-supply = <&mt6359_vsram_md_ldo_reg>;
+};
+
+/*
+ * The MTCMOS power-on sequence needs its rails up first: the scpsys
+ * driver enables "domain-supply" before flipping PWR_ON/PWR_ON_2ND,
+ * mirroring the vendor gpufreq order (vgpu/vsram_gpu first, then mtcmos).
+ * Same layout as mt8188-geralt upstream: core rail on mfg0, SRAM rail
+ * on mfg1.  Vendor names: _vgpu = VPROC1 buck, _vsram_gpu = VSRAM_MD.
+ */
+&mfg0 {
+	domain-supply = <&mt6359_vproc1_buck_reg>;
+};
+
+&mfg1 {
+	domain-supply = <&mt6359_vsram_md_ldo_reg>;
+};
