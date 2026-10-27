@@ -9,7 +9,7 @@ Every release contains:
 | file | what it is |
 |---|---|
 | `boot.img` | kernel 7.3-rc4 + a ~4 KB initramfs that mounts userdata and `switch_root`s into it |
-| `userdata.img.gz` | Arch Linux ARM on a 6 GiB f2fs filesystem |
+| `userdata.img.gz` | Arch Linux ARM on a 6 GiB ext4 filesystem, grown to the whole eMMC on first boot |
 | `SHA256SUMS` | checksums |
 
 ## flash
@@ -61,7 +61,7 @@ evergo-info             # one-screen system summary
 |---|---|
 | mainline kernel 7.3.0-rc4 | works |
 | RAM detection (4/6/8 GiB variants) | selected at build time |
-| storage (128 GB eMMC) | works, f2fs on the userdata region |
+| storage (128 GB eMMC) | works, ext4 grown to ~106 GiB on the userdata region |
 | display / framebuffer console | works (`mediatekdrmfb`) |
 | USB gadget networking (RNDIS) | works, high-speed, ~4.5 MB/s over scp |
 | hardware watchdog | fed from userspace (`evergo-watchdog.service`) |

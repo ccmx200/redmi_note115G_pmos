@@ -56,10 +56,10 @@ jobs:
           sudo apt-get install -y -qq \
             gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
             ccache bc bison flex libssl-dev libelf-dev libncurses-dev \
-            cpio gzip xz-utils python3 device-tree-compiler \
-            qemu-user-static f2fs-tools android-sdk-libsparse-utils
+            cpio gzip xz-utils python3 device-tree-compiler e2fsprogs \
+            qemu-user-static android-sdk-libsparse-utils
           aarch64-linux-gnu-gcc --version | head -1
-          mkfs.f2fs -V 2>&1 | head -1
+          mke2fs -V 2>&1 | head -1
           qemu-aarch64-static --version | head -1
 
       - name: prepare loop devices and f2fs
@@ -100,8 +100,9 @@ jobs:
           ls -l out/
           echo "--- boot.img header ---"
           od -A d -t x1 -N 48 out/boot.img
-          echo "--- userdata: is it f2fs? ---"
-          od -A d -t x1 -j 1024 -N 4 out/userdata.img
+          echo "--- userdata: ext4? ---"
+          file out/userdata.img || true
+          dumpe2fs -h out/userdata.img 2>/dev/null | grep -E "volume name|Block count|Inode count" || true
           echo "--- checksums ---"
           sha256sum out/boot.img out/userdata.img.gz out/userdata.simg > out/SHA256SUMS || true
           cat out/SHA256SUMS || true

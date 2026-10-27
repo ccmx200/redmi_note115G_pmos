@@ -257,6 +257,10 @@ pacman -S --noconfirm --needed \
 # bring-up password here; the first-login wizard offers to change it.
 echo "root:evergo" | chpasswd
 passwd -S root
+# the package cache is pure dead weight in a shipped image (about 500 MiB) and it
+# decides whether the sparse image fits the 2 GB per-asset release limit
+pacman -Scc --noconfirm >/dev/null 2>&1 || true
+rm -rf /var/cache/pacman/pkg/* /var/lib/pacman/sync/* /tmp/* 2>/dev/null || true
 echo "  $(pacman -Q | wc -l) packages"
 '
 
@@ -315,15 +319,17 @@ done
 sync
 echo "  chroot unmounted"
 
-say "userdata image (f2fs via sload)"
-ROOTIMG="$WORK/rootfs.f2fs"
+say "userdata image (ext4)"
+# ext4 rather than f2fs: the filesystem has to grow from the shipped size to the whole
+# eMMC user area on first boot, and f2fs's offline resize (resize.f2fs) never returns on
+# this handset.  mke2fs -d populates the image from the directory in one step.
+ROOTIMG="$WORK/rootfs.ext4"
 rm -f "$ROOTIMG"
 truncate -s "${ROOTFS_MB}M" "$ROOTIMG"
-mkfs.f2fs -f -l evergo -O extra_attr,inode_checksum,sb_checksum "$ROOTIMG" >/dev/null
-# sload.f2fs returns 1 even when it succeeds, so ignore its status - the fsck
-# below is what actually validates the image
-sload.f2fs -f "$R" -P "$ROOTIMG" 2>&1 | tail -3 | sed 's/^/  /' || true
-fsck.f2fs -f "$ROOTIMG" 2>&1 | tail -2 | sed 's/^/  /' || true
+mke2fs -t ext4 -F -L evergo -m 1 -q -d "$R" "$ROOTIMG"
+echo "  inodes: $(dumpe2fs -h "$ROOTIMG" 2>/dev/null | awk -F: '/Inode count/{gsub(/ /,"",$2); print $2}')"
+echo "  blocks: $(dumpe2fs -h "$ROOTIMG" 2>/dev/null | awk -F: '/Block count/{gsub(/ /,"",$2); print $2}')"
+e2fsck -fp "$ROOTIMG" >/dev/null 2>&1 || true
 
 say "userdata images"
 cp -f "$ROOTIMG" "$OUT/userdata.img"
@@ -363,41 +369,102 @@ if [ "$(id -u)" = 0 ]; then
     mknod "$IR/dev/console" c 5 1 && chmod 600 "$IR/dev/console"
     mknod "$IR/dev/null"    c 1 3 && chmod 666 "$IR/dev/null"
 fi
+# The first boot grows the filesystem to the whole eMMC user area, which needs e2fsck
+# and resize2fs inside the initramfs together with their library closure.
+for tool in /usr/sbin/e2fsck /usr/sbin/resize2fs; do
+    if [ -x "$R$tool" ]; then
+        python3 "$HERE/scripts/collect-libs.py" "$R" "$tool" "$IR" | sed 's/^/  /'
+    else
+        echo "  !! $tool missing from the rootfs, first-boot growth disabled"
+    fi
+done
+
 cat > "$IR/init" <<'INIT'
 #!/bin/sh
-# Mount the Arch root filesystem from the eMMC user area and hand over.
+# Mount the Arch root filesystem from the eMMC user area, grow it to the whole user area
+# on the first boot, and hand over.
 #
 #   eMMC user area : /dev/sdc (no partition nodes - the GPT is wiped)
 #   userdata start : 0x304000000 = 12,952,010,752 bytes = 12352 MiB
-#   filesystem     : f2fs, mounted through a loop with an explicit offset
+#   filesystem     : ext4, via a loop with an explicit offset; the loop spans the rest of
+#                    the disk (~107 GiB) and the fs is grown to it once, with resize2fs.
 #
-# Growing the filesystem to the rest of the eMMC was tried here (resize.f2fs is
-# carried in this initramfs for it) and had to be removed: on this handset
-# resize.f2fs never returns, even from a clean filesystem, and the phone never reaches
-# switch_root.  To use the full 107 GiB, build with a bigger ROOTFS_MB instead - the
-# sparse image only carries allocated blocks, so it is barely larger.
+# f2fs was tried first and abandoned: resize.f2fs never returns on this handset (three
+# attempts, with -F, stdin on /dev/null and discard disabled), and ext4's resize2fs is
+# what postmarketOS and the raphael-uboot project use for the same job.
+#
+# The log is mirrored to the eMMC just past the shipped 6 GiB filesystem every few
+# seconds, so a hang can still be read back after rebooting into a working system.
 UD_OFF=$((0x304000000))
-export PATH=/bin
+LOGOFF=$((0x304000000 + 6*1024*1024*1024 + 1024*1024))
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+
+log() {
+    echo "[grow] $*" >> /tmp/grow.log 2>/dev/null
+    echo "[grow] $*" > /dev/console 2>/dev/null
+}
+flush() {
+    [ -b /dev/sdc ] || return 0
+    dd if=/tmp/grow.log of=/dev/sdc bs=1M seek=$((LOGOFF/1048576)) conv=notrunc 2>/dev/null
+}
+
 mount -t proc     none /proc 2>/dev/null
 mount -t sysfs    none /sys  2>/dev/null
 mount -t devtmpfs none /dev  2>/dev/null
-mkdir -p /newroot
+mkdir -p /newroot /tmp
+: > /tmp/grow.log
+log "init start"
 
-# nothing else feeds the hardware watchdog after the bootloader arms it (31 s).  Use an
-# inherited descriptor: re-opening /dev/watchdog would fail once switch_root has moved
-# /dev, which is what caused a reboot loop every ~33 s.
+# LK arms the hardware watchdog for 31 s and nothing else feeds it yet.  Keep the fd
+# open across switch_root: re-opening /dev/watchdog afterwards fails, which is what
+# caused a reboot loop every ~33 s.
 if [ -e /dev/watchdog ]; then
     exec 3>/dev/watchdog
     ( while : ; do echo . >&3; sleep 8; done ) &
+    log "watchdog fed"
 fi
+
+# mirror the log continuously, so a hang still leaves a readable trace
+( while : ; do sleep 4; flush; done ) &
 
 i=0; while [ $i -lt 60 ]; do [ -b /dev/sdc ] && break; sleep 1; i=$((i+1)); done
 if [ -b /dev/sdc ]; then
+    log "sdc=$(blockdev --getsize64 /dev/sdc 2>/dev/null)"
     losetup -o "$UD_OFF" /dev/loop0 /dev/sdc 2>/dev/null
-    mount -t f2fs -o rw /dev/loop0 /newroot 2>/dev/null
+    log "loop0=$(blockdev --getsize64 /dev/loop0 2>/dev/null)"
+
+    mount -t ext4 -o rw /dev/loop0 /newroot 2>/dev/null
+    MRC=$?
+    log "mount rc=$MRC"
+    if [ "$MRC" = "0" ] && [ ! -e /newroot/.evergo-grown ]; then
+        log "growing to $(blockdev --getsize64 /dev/loop0 2>/dev/null) bytes"
+        umount /newroot 2>/dev/null
+        if [ -x /usr/sbin/resize2fs ]; then
+            # -p is preen mode: never prompts, which matters because there is no tty
+            [ -x /usr/sbin/e2fsck ] && /usr/sbin/e2fsck -fp /dev/loop0 >> /tmp/grow.log 2>&1
+            log "e2fsck rc=$?"
+            /usr/sbin/resize2fs /dev/loop0 >> /tmp/grow.log 2>&1
+            log "resize2fs rc=$?"
+        else
+            log "resize2fs missing"
+        fi
+        flush
+        mount -t ext4 -o rw /dev/loop0 /newroot 2>/dev/null
+        log "remount rc=$?"
+        touch /newroot/.evergo-grown 2>/dev/null
+        log "marker rc=$?"
+        df -h /newroot 2>/dev/null | tail -1 >> /tmp/grow.log
+    elif [ -e /newroot/.evergo-grown ]; then
+        log "already grown"
+    fi
+else
+    log "no /dev/sdc"
 fi
+flush
 
 if [ -x /newroot/sbin/init ]; then
+    log "switch_root"
+    flush
     echo V >&3 2>/dev/null
     exec 3>&- 2>/dev/null
     mkdir -p /newroot/dev /newroot/proc /newroot/sys /newroot/run
@@ -407,7 +474,8 @@ if [ -x /newroot/sbin/init ]; then
     exec switch_root /newroot /sbin/init
 fi
 
-# nothing bootable: never let PID 1 exit, or the kernel panics
+log "no init, dropping to a shell"
+flush
 while : ; do /bin/sh; sleep 1; done
 INIT
 chmod 755 "$IR/init"
