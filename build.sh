@@ -251,7 +251,12 @@ pacman -Sy --noconfirm >/dev/null
 pacman -S --noconfirm --needed \
   btop htop fastfetch git wget curl nano vim tmux rsync unzip zip file less \
   man-db which pacman-contrib net-tools bind-tools iputils traceroute mtr whois \
-  lm_sensors lsof strace sudo f2fs-tools >/dev/null
+  lm_sensors lsof strace sudo >/dev/null
+# The Arch tarball ships root with a locked password, and the image only allows
+# password logins - so a freshly flashed phone would be unreachable.  Set the
+# bring-up password here; the first-login wizard offers to change it.
+echo "root:evergo" | chpasswd
+passwd -S root
 echo "  $(pacman -Q | wc -l) packages"
 '
 
@@ -358,27 +363,21 @@ if [ "$(id -u)" = 0 ]; then
     mknod "$IR/dev/console" c 5 1 && chmod 600 "$IR/dev/console"
     mknod "$IR/dev/null"    c 1 3 && chmod 666 "$IR/dev/null"
 fi
-# The first boot grows the filesystem to fill the eMMC.  f2fs cannot be resized while
-# mounted, so that has to happen here, in the initramfs, before the root is handed over -
-# which means resize.f2fs and everything it links against has to be inside this archive.
-if [ -x "$R/usr/sbin/resize.f2fs" ]; then
-    python3 "$HERE/scripts/collect-libs.py" "$R" /usr/sbin/resize.f2fs "$IR" | sed 's/^/  /'
-else
-    echo "  !! resize.f2fs missing from the rootfs, first-boot growth disabled"
-fi
-
 cat > "$IR/init" <<'INIT'
 #!/bin/sh
 # Mount the Arch root filesystem from the eMMC user area and hand over.
 #
 #   eMMC user area : /dev/sdc (no partition nodes - the GPT is wiped)
 #   userdata start : 0x304000000 = 12,952,010,752 bytes = 12352 MiB
-#   filesystem     : f2fs, via a loop with an explicit offset; the loop spans the rest
-#                    of the disk (about 107 GiB), which is what the filesystem is grown
-#                    to on the first boot.  f2fs cannot be resized while mounted, so the
-#                    growth happens here, before switch_root.
+#   filesystem     : f2fs, mounted through a loop with an explicit offset
+#
+# Growing the filesystem to the rest of the eMMC was tried here (resize.f2fs is
+# carried in this initramfs for it) and had to be removed: on this handset
+# resize.f2fs never returns, even from a clean filesystem, and the phone never reaches
+# switch_root.  To use the full 107 GiB, build with a bigger ROOTFS_MB instead - the
+# sparse image only carries allocated blocks, so it is barely larger.
 UD_OFF=$((0x304000000))
-export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH=/bin
 mount -t proc     none /proc 2>/dev/null
 mount -t sysfs    none /sys  2>/dev/null
 mount -t devtmpfs none /dev  2>/dev/null
@@ -398,25 +397,7 @@ if [ -b /dev/sdc ]; then
     mount -t f2fs -o rw /dev/loop0 /newroot 2>/dev/null
 fi
 
-# first boot: grow the filesystem to the end of the eMMC.  The marker lives on the
-# filesystem itself, so a plain reflash of boot.img never triggers it again.
-if [ -x /newroot/sbin/init ] && [ ! -e /newroot/.evergo-grown ]; then
-    echo "[evergo] growing the root filesystem to fill the eMMC"
-    umount /newroot 2>/dev/null
-    if [ -x /usr/sbin/resize.f2fs ]; then
-        # -F skips the "this is experimental, continue? [y/n]" prompt, which
-        # would otherwise block here with no stdin attached
-        /usr/sbin/resize.f2fs -F /dev/loop0 > /dev/console 2>&1
-        echo "[evergo] resize done"
-    else
-        echo "[evergo] resize.f2fs missing, skipping"
-    fi
-    mount -t f2fs -o rw /dev/loop0 /newroot 2>/dev/null
-    touch /newroot/.evergo-grown 2>/dev/null
-fi
-
 if [ -x /newroot/sbin/init ]; then
-    # hand the watchdog to Arch's evergo-watchdog.service
     echo V >&3 2>/dev/null
     exec 3>&- 2>/dev/null
     mkdir -p /newroot/dev /newroot/proc /newroot/sys /newroot/run
