@@ -360,7 +360,10 @@ if [ ! -x "$BB" ]; then
 fi
 chmod 755 "$BB"
 cp "$BB" "$IR/bin/busybox"; chmod 755 "$IR/bin/busybox"
-for a in sh mount umount cat gzip losetup switch_root sleep echo ls mkdir ln sync; do
+# the init needs more than the bare minimum: dd and blockdev write the debug log and
+# report sizes, df/head/tail/grep print them, touch writes the grown marker
+for a in sh mount umount cat gzip losetup switch_root sleep echo ls mkdir ln sync \
+         dd blockdev df head tail grep sed touch cut; do
     ln -sf busybox "$IR/bin/$a"
 done
 # the kernel opens /dev/console before exec'ing init; with an initramfs present
