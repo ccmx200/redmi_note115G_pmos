@@ -27,6 +27,10 @@ KERNEL_REPO="${KERNEL_REPO:-https://github.com/ccmx200/linux-evergo.git}"
 # the author's repo has had its branches rewritten before (the old
 # bringup/evergo-mainline is gone, only main remains), so try a few and fail loudly
 KERNEL_BRANCH="${KERNEL_BRANCH:-main}"
+# The upstream tree has been rewritten and main no longer carries the port files;
+# this is the commit that was cross-built and booted on hardware.  Fetching it by
+# SHA works even though the branch it lived on is gone.
+KERNEL_COMMIT="${KERNEL_COMMIT:-cb9ba2ee0f929ff8985f4821a0ee32fa1c06c5fd}"
 KERNEL_SRC="${KERNEL_SRC:-}"             # reuse an existing checkout if set
 RAM_GIB="${RAM_GIB:-6}"                  # 4/6/8 GiB units exist
 PANEL="${PANEL:-k16a_36_02_0a_vdo,lcm}"  # Tianma; CSOT is k16a_42_02_0b_vdo,lcm
@@ -76,17 +80,28 @@ if [ -n "$KERNEL_SRC" ] && [ -d "$KERNEL_SRC" ]; then
 else
     L="$SRC/linux"
     if [ ! -d "$L/.git" ]; then
-        # KERNEL_BRANCH may have been renamed upstream; fall through to the usual
-        # defaults instead of dying on a git clone error
-        for b in "$KERNEL_BRANCH" main master; do
-            echo "  cloning branch $b"
-            if git clone --depth 1 --single-branch --branch "$b" "$KERNEL_REPO" "$L" 2>/dev/null; then
-                echo "  using $b"
-                break
-            fi
+        # fetch the pinned commit first: that is the tree that was booted on hardware.
+        # Upstream's branches have been rewritten, so a plain clone of main is not
+        # equivalent.
+        mkdir -p "$L"
+        git -C "$L" init -q .
+        git -C "$L" remote add origin "$KERNEL_REPO"
+        if git -C "$L" fetch --depth 1 origin "$KERNEL_COMMIT" 2>/dev/null; then
+            git -C "$L" checkout -q FETCH_HEAD
+            echo "  using pinned commit $KERNEL_COMMIT"
+        else
+            echo "  !! could not fetch $KERNEL_COMMIT, falling back to a branch"
             rm -rf "$L"
-        done
-        [ -d "$L/.git" ] || { echo "  !! could not clone $KERNEL_REPO"; exit 1; }
+            for b in "$KERNEL_BRANCH" main master; do
+                echo "  cloning branch $b"
+                if git clone --depth 1 --single-branch --branch "$b" "$KERNEL_REPO" "$L" 2>/dev/null; then
+                    echo "  using $b"
+                    break
+                fi
+                rm -rf "$L"
+            done
+        fi
+        [ -d "$L/.git" ] || { echo "  !! could not get the kernel source"; exit 1; }
     else
         echo "  reusing $L"
     fi
