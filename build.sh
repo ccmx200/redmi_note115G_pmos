@@ -415,7 +415,16 @@ cat > "$IR/init" <<'INIT'
 # seconds, so a hang can still be read back after rebooting into a working system.
 UD_OFF=$((0x304000000))
 LOGOFF=$((0x304000000 + 6*1024*1024*1024 + 1024*1024))
-export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH=/bin:/usr/sbin:/usr/bin:/sbin
+
+# Do not trust the archive's applet links: if the busybox symlinks are missing the init
+# spams "sleep: not found" on the console and the watchdog feed loop turns into a busy
+# loop.  Recreate whatever is missing before anything else runs.
+for _a in sleep dd blockdev df head tail grep sed touch cut cat echo ls mkdir ln sync \
+          mount umount losetup switch_root; do
+    [ -e "/bin/$_a" ] || ln -sf busybox "/bin/$_a" 2>/dev/null
+done
+unset _a
 
 log() {
     echo "[grow] $*" >> /tmp/grow.log 2>/dev/null
