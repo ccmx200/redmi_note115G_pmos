@@ -1,0 +1,167 @@
+#!/bin/sh
+# evergo initramfs init - a small Alpine Linux environment that prepares the real root
+# filesystem and hands over to it.
+#
+# Design notes, all learned the hard way on this handset:
+#
+#   * There is no serial console.  The only way in is the USB RNDIS gadget, so usb0 is
+#     brought up and dropbear is started *before* anything can fail.  If the real root
+#     never comes up we stay here and the phone is still reachable, which turns a blank
+#     screen into "ssh in and look".
+#   * Nothing below assumes `sleep` exists.  An earlier hand-rolled busybox initramfs was
+#     missing it and the console filled with "sleep: not found"; delay() falls back to
+#     usleep and then to polling /proc/uptime, so the init cannot spam or busy-loop.
+#   * dropbear listens on 2222; the real system's sshd takes 22 after switch_root.
+#   * The watchdog is armed by the bootloader for 31 s.  The fd is inherited across
+#     switch_root because re-opening /dev/watchdog afterwards fails (that caused a reboot
+#     loop every 33 s).
+#   * Everything here is a busybox applet, which keeps the initramfs small.  A 39 MB
+#     initramfs grew the kernel Image to 94 MB and the handset panicked.
+
+UD_OFF=$((0x304000000))
+GROWN_MARKER=/newroot/.evergo-grown
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin
+
+mkdir -p /proc /sys /dev /tmp /run /newroot
+mount -t proc     none /proc 2>/dev/null
+mount -t sysfs    none /sys  2>/dev/null
+mount -t devtmpfs none /dev  2>/dev/null
+
+log() {
+    echo "[init] $*"
+    echo "[init] $*" >> /tmp/init.log 2>/dev/null
+}
+
+# ---------------------------------------------------------------- delay ------
+# Sleep for $1 seconds without assuming any particular tool exists.
+_now() {
+    awk '{printf "%d", $1}' /proc/uptime 2>/dev/null || echo 0
+}
+delay() {
+    _secs=${1:-1}
+    if command -v sleep >/dev/null 2>&1; then
+        sleep "$_secs"
+        return 0
+    fi
+    if command -v usleep >/dev/null 2>&1; then
+        usleep $((_secs * 1000000))
+        return 0
+    fi
+    # last resort: poll the kernel's uptime
+    _end=$(( $(_now) + _secs ))
+    while [ "$(_now)" -lt "$_end" ]; do :; done
+}
+
+log "==== evergo initramfs ===="
+command -v sleep >/dev/null 2>&1 && log "delay: sleep" || log "delay: fallback (no sleep)"
+
+# ---------------------------------------------------------------- watchdog ----
+if [ -e /dev/watchdog ]; then
+    exec 3>/dev/watchdog
+    ( while : ; do echo . >&3; delay 8; done ) &
+    log "watchdog: fd 3"
+else
+    exec 3>/dev/null
+    log "watchdog: none"
+fi
+
+# ---------------------------------------------------------------- network -----
+i=0
+while [ $i -lt 60 ]; do
+    [ -e /sys/class/net/usb0 ] && break
+    delay 1
+    i=$((i + 1))
+done
+
+if [ -e /sys/class/net/usb0 ]; then
+    ifconfig usb0 169.254.42.1 netmask 255.255.0.0 up 2>/dev/null
+    log "usb0: 169.254.42.1"
+else
+    log "usb0: MISSING"
+fi
+
+# ------------------------------------------------------------------ sshd ------
+if [ -f /etc/rootpw ] && ! grep -q '^root:\$' /etc/shadow 2>/dev/null; then
+    chpasswd < /etc/rootpw 2>/dev/null
+fi
+mkdir -p /etc/dropbear /run
+if ! ls /etc/dropbear/*_host_key >/dev/null 2>&1; then
+    dropbearkey -t ed25519 -f /etc/dropbear/dropbear_ed25519_host_key >/dev/null 2>&1
+fi
+if command -v dropbear >/dev/null 2>&1; then
+    dropbear -p 2222 -R -B 2>/dev/null &
+    log "dropbear: 169.254.42.1:2222  (root/evergo)"
+fi
+
+# ------------------------------------------------------------------- disk -----
+BOOTED=0
+if [ -b /dev/sdc ]; then
+    log "eMMC: $(blockdev --getsize64 /dev/sdc 2>/dev/null) bytes"
+    losetup -o "$UD_OFF" /dev/loop0 /dev/sdc 2>/dev/null
+    log "loop0: $(blockdev --getsize64 /dev/loop0 2>/dev/null) bytes"
+
+    if mount -o rw /dev/loop0 /newroot 2>/tmp/mount.err; then
+        FS=$(stat -f -c %T /newroot 2>/dev/null)
+        log "mounted: $FS"
+        if [ ! -e "$GROWN_MARKER" ]; then
+            log "first boot: growing $FS to the whole eMMC"
+            umount /newroot 2>/dev/null
+            if [ "$FS" = "ext4" ] || [ "$FS" = "ext2/ext3" ]; then
+                e2fsck -fp /dev/loop0 2>&1 | tail -1 | while read -r l; do log "e2fsck: $l"; done
+                resize2fs /dev/loop0 2>&1 | tail -1 | while read -r l; do log "resize2fs: $l"; done
+            fi
+            if mount -o rw /dev/loop0 /newroot 2>/tmp/mount.err; then
+                touch "$GROWN_MARKER" 2>/dev/null
+                log "grown: $(df -h /newroot 2>/dev/null | awk 'NR==2{print $2" total, "$4" free"}')"
+            else
+                log "remount FAILED: $(cat /tmp/mount.err)"
+            fi
+        else
+            log "already grown"
+        fi
+        BOOTED=1
+    else
+        log "MOUNT FAILED: $(cat /tmp/mount.err 2>/dev/null)"
+    fi
+else
+    log "/dev/sdc not present"
+fi
+
+# ------------------------------------------------------------- switch root ----
+INIT=/newroot/sbin/init
+[ -x "$INIT" ] || INIT=/newroot/usr/lib/systemd/systemd
+if [ "$BOOTED" = 1 ] && [ -x "$INIT" ]; then
+    log "switch_root -> $INIT"
+    echo V >&3 2>/dev/null
+    exec 3>&- 2>/dev/null
+    killall dropbear 2>/dev/null
+    mkdir -p /newroot/dev /newroot/proc /newroot/sys /newroot/run
+    mount --move /dev  /newroot/dev  2>/dev/null
+    mount --move /proc /newroot/proc 2>/dev/null
+    mount --move /sys  /newroot/sys  2>/dev/null
+    exec switch_root /newroot "$INIT"
+fi
+
+# ----------------------------------------------------------------- rescue -----
+log "NO ROOT - staying in the initramfs"
+cat <<EOF
+
+  ============================================================
+   evergo rescue environment
+  ============================================================
+   The real root filesystem did not come up.
+   You are in a full Alpine Linux environment.
+
+     ssh root@169.254.42.1 -p 2222      password: evergo
+
+   dmesg | tail             kernel messages
+   blkid /dev/loop0         what is on the userdata area
+   mount /dev/loop0 /newroot
+   e2fsck -fp /dev/loop0    repair the filesystem
+   resize2fs /dev/loop0     grow it to the eMMC
+   cat /tmp/init.log        this log
+  ============================================================
+
+EOF
+
+while : ; do delay 30; done

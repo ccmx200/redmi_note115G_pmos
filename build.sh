@@ -35,6 +35,10 @@ KERNEL_SRC="${KERNEL_SRC:-}"             # reuse an existing checkout if set
 RAM_GIB="${RAM_GIB:-6}"                  # 4/6/8 GiB units exist
 PANEL="${PANEL:-k16a_36_02_0a_vdo,lcm}"  # Tianma; CSOT is k16a_42_02_0b_vdo,lcm
 ROOTFS_MB="${ROOTFS_MB:-6144}"           # 6 GiB f2fs
+# Which distribution to put in the image.  Each one is built by its own script,
+# scripts/distro-$DISTRO.sh, which populates a plain directory; the image creation,
+# initramfs and boot.img packing below are shared by all of them.
+DISTRO="${DISTRO:-arch}"                         # arch | debian | ubuntu | fedora
 ARCH_TARBALL="${ARCH_TARBALL:-}"         # reuse a downloaded Arch ARM rootfs tarball
 # mirror used to fetch packages during the build.  The Chinese mirrors are unreachable
 # from GitHub's runners, so the default is OCF (Berkeley), which serves the whole tree
@@ -168,6 +172,9 @@ BOOTARGS = (
     "console=tty0 loglevel=4 printk.devkmsg=on clk_ignore_unused "
     "pd_ignore_unused regulator_ignore_unused panic=10 "
     "watchdog_thresh=30 initcall_blacklist=exynos4_pm_init_power_domain "
+    # fbcon=nodefer is required: without it the kernel does not reach userspace on
+    # this panel (the RNDIS gadget never enumerates).  It also means the Tux logo is
+    # drawn before the DSI panel is up and is lost - a cosmetic trade we accept.
     "fbcon=nodefer cma=256M"
 )
 s, n = re.subn(r'bootargs = "[^"]*";', f'bootargs = "{BOOTARGS}";', s)
@@ -206,133 +213,114 @@ DTB="$KOUT/arch/arm64/boot/dts/mediatek/mt6833-xiaomi-evergo.dtb"
 ls -l "$DTB"
 
 # -------------------------------------------------------------- rootfs ------
-say "Arch Linux ARM rootfs ($ROOTFS_MB MiB f2fs)"
-if [ -n "$ARCH_TARBALL" ] && [ -f "$ARCH_TARBALL" ]; then
-    echo "  reusing $ARCH_TARBALL"
-else
-    ARCH_TARBALL="$WORK/ArchLinuxARM-aarch64-latest.tar.gz"
-    curl -fsSL -o "$ARCH_TARBALL" "https://$MIRROR_HOST/archlinuxarm/os/ArchLinuxARM-aarch64-latest.tar.gz"
-fi
+say "rootfs: $DISTRO"
 
-# The rootfs is assembled in a plain directory and only written into the f2fs image at
-# the very end, with sload.f2fs.  The obvious alternative - mkfs.f2fs then mount -o loop
-# - does not work in CI: the runner kernel has no f2fs module ("mount: failed mount
-# system call"), and mounting needs root.  sload.f2fs needs neither.
+# The rootfs is assembled as a plain directory by a per-distro script; the image is only
+# created at the very end with mke2fs -d, which needs neither mounting nor root.
 R="$WORK/rootfs"
 rm -rf "$R"; mkdir -p "$R"
-tar xzf "$ARCH_TARBALL" -C "$R" --numeric-owner 2>/dev/null || true
-echo "  extracted $(find "$R" -type f 2>/dev/null | wc -l) files"
 
-say "rootfs: pacman mirrors, keyring, packages"
-# pacman 7.x sandboxes itself with Landlock; this kernel has
-# CONFIG_SECURITY_LANDLOCK off, so every transaction would fail without this.
-sed -i 's/^#DisableSandboxFilesystem/DisableSandboxFilesystem/' "$R/etc/pacman.conf"
-sed -i 's/^#DisableSandboxSyscalls/DisableSandboxSyscalls/' "$R/etc/pacman.conf"
-cat > "$R/etc/pacman.d/mirrorlist" <<ML
-# build-time mirror list; rewritten for the delivered image further down
-Server = https://${MIRROR_HOST}/archlinuxarm/\$arch/\$repo
-Server = https://mirrors.tuna.tsinghua.edu.cn/archlinuxarm/\$arch/\$repo
-Server = https://mirrors.ustc.edu.cn/archlinuxarm/\$arch/\$repo
-ML
-
-cp -f /usr/bin/qemu-aarch64-static "$R/usr/bin/qemu-aarch64-static"
-mount --bind /dev "$R/dev"; mount --bind /proc "$R/proc"; mount --bind /sys "$R/sys"
-cp -f /etc/resolv.conf "$R/etc/resolv.conf"
-# DNS does not work inside the qemu-user chroot, so pin the mirror IPs for the build
-cp -f "$R/etc/hosts" "$WORK/hosts.bak"
-# getent hosts returns IPv6 first on some hosts, and an IPv6 pin makes curl fail
-# instantly ("Could not connect to server after 1 ms") because the chroot has no IPv6
-# route - ask for the A record specifically
-for h in "$MIRROR_HOST" mirrors.tuna.tsinghua.edu.cn mirrors.ustc.edu.cn; do
-    ip=$(getent ahostsv4 "$h" 2>/dev/null | awk 'NR==1{print $1}')
-    [ -z "$ip" ] && ip=$(getent hosts "$h" 2>/dev/null | awk '$1 ~ /^[0-9]+\./ {print $1; exit}')
-    if [ -n "$ip" ]; then
-        echo "$ip $h" >> "$R/etc/hosts"
-        echo "  pinned $h -> $ip"
-    else
-        echo "  could not resolve $h (will rely on DNS)"
-    fi
-done
-
-# CheckSpace stats the cachedir's mount point, which a plain directory chroot is
-# not, so it reports "not enough free disk space" and aborts the transaction
-sed -i 's/^CheckSpace/#CheckSpace/' "$R/etc/pacman.conf"
-
-chroot "$R" /usr/bin/qemu-aarch64-static /usr/bin/bash -c '
-set -e
-pacman-key --init >/dev/null 2>&1
-pacman-key --populate archlinuxarm >/dev/null 2>&1
-pacman -Sy --noconfirm >/dev/null
-pacman -S --noconfirm --needed \
-  btop htop fastfetch git wget curl nano vim tmux rsync unzip zip file less \
-  man-db which pacman-contrib net-tools bind-tools iputils traceroute mtr whois \
-  lm_sensors lsof strace sudo >/dev/null
-# The Arch tarball ships root with a locked password, and the image only allows
-# password logins - so a freshly flashed phone would be unreachable.  Set the
-# bring-up password here; the first-login wizard offers to change it.
-echo "root:evergo" | chpasswd
-passwd -S root
-# the package cache is pure dead weight in a shipped image (about 500 MiB) and it
-# decides whether the sparse image fits the 2 GB per-asset release limit
-pacman -Scc --noconfirm >/dev/null 2>&1 || true
-rm -rf /var/cache/pacman/pkg/* /var/lib/pacman/sync/* /tmp/* 2>/dev/null || true
-echo "  $(pacman -Q | wc -l) packages"
-'
-
-# The mirrorlist written for the build points at whatever the build could reach. The
-# delivered image should use mirrors that work in China; pacman tries them in order and
-# skips failures, so a slow first entry only costs time, not correctness.
-cat > "$R/etc/pacman.d/mirrorlist" <<'ML'
-# Arch Linux ARM mirrors.  Tsinghua and USTC are reachable from mainland China; the
-# official host is kept as a fallback.
-Server = https://mirrors.tuna.tsinghua.edu.cn/archlinuxarm/$arch/$repo
-Server = https://mirrors.ustc.edu.cn/archlinuxarm/$arch/$repo
-Server = https://mirror.archlinuxarm.org/$arch/$repo
-ML
+export WORK
+export MIRROR_HOST ARCH_TARBALL
+if [ ! -x "$HERE/scripts/distro-$DISTRO.sh" ]; then
+    echo "  !! no scripts/distro-$DISTRO.sh (pick arch, debian, ubuntu or fedora)"
+    exit 1
+fi
+bash "$HERE/scripts/distro-$DISTRO.sh" "$R" || { echo "  !! rootfs build failed"; exit 1; }
+echo "  $(du -sh "$R" | cut -f1) in $R"
 
 say "rootfs: apply the evergo overlay"
 tar xzf "$HERE/rootfs-overlay.tar.gz" -C "$R" --numeric-owner
-chmod 755 "$R/usr/local/bin/evergo-mode" "$R/usr/local/bin/evergo-info" "$R/usr/local/bin/evergo-first-login"
-chmod 644 "$R/etc/profile.d/00-evergo-welcome.sh" "$R/etc/evergo/fastfetch.jsonc"
-rm -f "$R/etc/hosts"; mv -f "$WORK/hosts.bak" "$R/etc/hosts"
+chmod 755 "$R/usr/local/bin/evergo-mode" "$R/usr/local/bin/evergo-info" "$R/usr/local/bin/evergo-first-login" 2>/dev/null || true
+chmod 644 "$R/etc/profile.d/00-evergo-welcome.sh" "$R/etc/evergo/fastfetch.jsonc" 2>/dev/null || true
+rm -f "$R/etc/hosts" 2>/dev/null || true
 mkdir -p "$R/etc/systemd/system/multi-user.target.wants" \
          "$R/etc/systemd/system/sysinit.target.wants" \
          "$R/etc/systemd/system/getty.target.wants" \
          "$R/etc/ssh/sshd_config.d" "$R/var/log" "$R/root"
-for u in sshd systemd-networkd systemd-resolved arch-boot-marker evergo-firstboot; do
-    ln -sf "/usr/lib/systemd/system/$u.service" "$R/etc/systemd/system/multi-user.target.wants/$u.service" 2>/dev/null || \
-    ln -sf "/etc/systemd/system/$u.service"     "$R/etc/systemd/system/multi-user.target.wants/$u.service"
+
+# distro-specific bits the overlay cannot express
+case "$DISTRO" in
+arch)
+    # Arch tarball ships root with a locked password; handled in distro-arch.sh
+    ;;
+debian|ubuntu)
+    # the Debian family has no /etc/pacman.conf; drop the Arch leftovers from the overlay
+    rm -f "$R/etc/pacman.conf" "$R/etc/pacman.d/mirrorlist" 2>/dev/null || true
+    rmdir "$R/etc/pacman.d" 2>/dev/null || true
+    # sudo group is "sudo" there
+    echo '%sudo ALL=(ALL:ALL) ALL' > "$R/etc/sudoers.d/10-sudo" 2>/dev/null || true
+    chmod 440 "$R/etc/sudoers.d/10-sudo" 2>/dev/null || true
+    ;;
+fedora)
+    rm -f "$R/etc/pacman.conf" "$R/etc/pacman.d/mirrorlist" 2>/dev/null || true
+    rmdir "$R/etc/pacman.d" 2>/dev/null || true
+    echo '%wheel ALL=(ALL:ALL) ALL' > "$R/etc/sudoers.d/10-wheel" 2>/dev/null || true
+    chmod 440 "$R/etc/sudoers.d/10-wheel" 2>/dev/null || true
+    ;;
+esac
+
+# enable the services we ship
+for u in sshd systemd-networkd systemd-resolved evergo-firstboot; do
+    if [ -e "$R/usr/lib/systemd/system/$u.service" ] || [ -e "$R/lib/systemd/system/$u.service" ]; then
+        ln -sf "/usr/lib/systemd/system/$u.service" \
+            "$R/etc/systemd/system/multi-user.target.wants/$u.service" 2>/dev/null || \
+        ln -sf "/lib/systemd/system/$u.service" \
+            "$R/etc/systemd/system/multi-user.target.wants/$u.service" 2>/dev/null || true
+    fi
 done
 ln -sf /usr/lib/systemd/system/systemd-networkd.socket "$R/etc/systemd/system/sockets.target.wants/systemd-networkd.socket" 2>/dev/null || true
-ln -sf /etc/systemd/system/evergo-watchdog.service "$R/etc/systemd/system/sysinit.target.wants/evergo-watchdog.service"
-ln -sf /usr/lib/systemd/system/serial-getty@.service "$R/etc/systemd/system/getty.target.wants/serial-getty@ttyGS0.service"
-[ -e "$R/etc/systemd/system/default.target" ] || ln -sf /usr/lib/systemd/system/multi-user.target "$R/etc/systemd/system/default.target"
-rm -f "$R/usr/bin/qemu-aarch64-static"
+ln -sf /etc/systemd/system/evergo-watchdog.service "$R/etc/systemd/system/sysinit.target.wants/evergo-watchdog.service" 2>/dev/null || true
+[ -e "$R/etc/systemd/system/default.target" ] || ln -sf /usr/lib/systemd/system/multi-user.target "$R/etc/systemd/system/default.target" 2>/dev/null || true
+
+say "rootfs: distro post-processing"
+
+# Services that try to reach the internet (or the cloud) during the first boot and can
+# hold up the boot for minutes on a phone whose only uplink is an RNDIS cable.  Masking
+# them is cheap and they are useless here.
+for u in ubuntu-advantage.service ua-reboot-cmds.service ua-timer.timer \
+         apport.service whoopsie.service snapd.service snapd.socket \
+         unattended-upgrades.service apt-daily.service apt-daily-upgrade.service \
+         NetworkManager.service NetworkManager-wait-online.service \
+         cloud-init.service cloud-init-local.service cloud-config.service cloud-final.service \
+         systemd-networkd-wait-online.service; do
+    if [ -e "$R/usr/lib/systemd/system/$u" ] || [ -e "$R/lib/systemd/system/$u" ] ||
+       [ -e "$R/etc/systemd/system/$u" ]; then
+        mkdir -p "$R/etc/systemd/system"
+        ln -sf /dev/null "$R/etc/systemd/system/$u"
+    fi
+done
+
+# systemd-networkd owns usb0.  Fedora enables NetworkManager by default, and two network
+# managers fighting over the interface means no address at all.
+if [ -e "$R/usr/lib/systemd/system/systemd-networkd.service" ] ||
+   [ -e "$R/lib/systemd/system/systemd-networkd.service" ]; then
+    mkdir -p "$R/etc/systemd/system/multi-user.target.wants"
+    ln -sf /usr/lib/systemd/system/systemd-networkd.service \
+        "$R/etc/systemd/system/multi-user.target.wants/systemd-networkd.service" 2>/dev/null || \
+    ln -sf /lib/systemd/system/systemd-networkd.service \
+        "$R/etc/systemd/system/multi-user.target.wants/systemd-networkd.service" 2>/dev/null || true
+fi
+
+# The watchdog has to be running before anything else can hang.
+if [ -e "$R/etc/systemd/system/evergo-watchdog.service" ]; then
+    mkdir -p "$R/etc/systemd/system/sysinit.target.wants"
+    ln -sf /etc/systemd/system/evergo-watchdog.service \
+        "$R/etc/systemd/system/sysinit.target.wants/evergo-watchdog.service" 2>/dev/null || true
+fi
 
 say "rootfs: verify"
-test -x "$R/sbin/init"                                  && echo "  sbin/init ok"
-test -s "$R/etc/pacman.d/gnupg/pubring.gpg"             && echo "  keyring ok"
-test -x "$R/usr/local/bin/evergo-mode"                  && echo "  evergo-mode ok"
-test -x "$R/usr/local/bin/evergo-first-login"           && echo "  first-login ok"
-test -f "$R/etc/evergo/fastfetch.jsonc"                 && echo "  fastfetch config ok"
+test -x "$R/sbin/init"                        && echo "  sbin/init ok"
+test -x "$R/usr/lib/systemd/systemd"          && echo "  systemd ok"
+test -x "$R/usr/sbin/sshd"                    && echo "  sshd ok"
+test -x "$R/usr/sbin/resize2fs"               && echo "  resize2fs ok"
+test -x "$R/usr/sbin/e2fsck"                  && echo "  e2fsck ok"
+test -x "$R/usr/local/bin/evergo-mode"        && echo "  evergo-mode ok"
+test -x "$R/usr/local/bin/evergo-first-login" && echo "  first-login ok"
 grep -q '^PubkeyAuthentication no' "$R/etc/ssh/sshd_config.d/10-bringup.conf" && echo "  sshd: password only"
-echo "  hostname: $(cat "$R/etc/hostname")"
+echo "  hostname: $(cat "$R/etc/hostname" 2>/dev/null)"
 
 sync
-# pacman-key leaves a gpg-agent behind that holds /dev open; kill it before unmounting
-pkill -f 'gpg-agent' 2>/dev/null || true
-sleep 1
-for m in "$R/dev" "$R/proc" "$R/sys"; do
-    for try in 1 2 3 4 5; do
-        mountpoint -q "$m" 2>/dev/null || break
-        umount "$m" 2>/dev/null && break
-        pkill -f 'gpg-agent' 2>/dev/null || true
-        sleep 1
-    done
-    mountpoint -q "$m" 2>/dev/null && umount -l "$m" 2>/dev/null || true
-done
-sync
-echo "  chroot unmounted"
 
 say "userdata image (ext4)"
 # ext4 rather than f2fs: the filesystem has to grow from the shipped size to the whole
@@ -411,28 +399,23 @@ cat > "$IR/init" <<'INIT'
 # attempts, with -F, stdin on /dev/null and discard disabled), and ext4's resize2fs is
 # what postmarketOS and the raphael-uboot project use for the same job.
 #
-# The log is mirrored to the eMMC just past the shipped 6 GiB filesystem every few
 # seconds, so a hang can still be read back after rebooting into a working system.
 UD_OFF=$((0x304000000))
-LOGOFF=$((0x304000000 + 6*1024*1024*1024 + 1024*1024))
-export PATH=/bin:/usr/sbin:/usr/bin:/sbin
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 
-# Do not trust the archive's applet links: if the busybox symlinks are missing the init
-# spams "sleep: not found" on the console and the watchdog feed loop turns into a busy
-# loop.  Recreate whatever is missing before anything else runs.
-for _a in sleep dd blockdev df head tail grep sed touch cut cat echo ls mkdir ln sync \
-          mount umount losetup switch_root; do
-    [ -e "/bin/$_a" ] || ln -sf busybox "/bin/$_a" 2>/dev/null
-done
-unset _a
+# Nothing below assumes sleep exists.  An earlier image was missing the applet and the
+# console filled with "sleep: not found", so this falls back to usleep and then to
+# polling /proc/uptime.
+_now() { awk '{printf "%d", $1}' /proc/uptime 2>/dev/null || echo 0; }
+delay() {
+    _n=${1:-1}
+    if command -v sleep >/dev/null 2>&1; then sleep $_n; return 0; fi
+    if command -v usleep >/dev/null 2>&1; then usleep $((_n * 1000000)); return 0; fi
+    _e=$(( $(_now) + _n )); while [ "$(_now)" -lt "$_e" ]; do :; done
+}
 
 log() {
-    echo "[grow] $*" >> /tmp/grow.log 2>/dev/null
-    echo "[grow] $*" > /dev/console 2>/dev/null
-}
-flush() {
-    [ -b /dev/sdc ] || return 0
-    dd if=/tmp/grow.log of=/dev/sdc bs=1M seek=$((LOGOFF/1048576)) conv=notrunc 2>/dev/null
+    echo "[init] $*"
 }
 
 mount -t proc     none /proc 2>/dev/null
@@ -447,14 +430,13 @@ log "init start"
 # caused a reboot loop every ~33 s.
 if [ -e /dev/watchdog ]; then
     exec 3>/dev/watchdog
-    ( while : ; do echo . >&3; sleep 8; done ) &
+    ( while : ; do echo . >&3; delay 8; done ) &
     log "watchdog fed"
 fi
 
 # mirror the log continuously, so a hang still leaves a readable trace
-( while : ; do sleep 4; flush; done ) &
 
-i=0; while [ $i -lt 60 ]; do [ -b /dev/sdc ] && break; sleep 1; i=$((i+1)); done
+i=0; while [ $i -lt 60 ]; do [ -b /dev/sdc ] && break; delay 1; i=$((i+1)); done
 if [ -b /dev/sdc ]; then
     log "sdc=$(blockdev --getsize64 /dev/sdc 2>/dev/null)"
     losetup -o "$UD_OFF" /dev/loop0 /dev/sdc 2>/dev/null
@@ -466,20 +448,31 @@ if [ -b /dev/sdc ]; then
     if [ "$MRC" = "0" ] && [ ! -e /newroot/.evergo-grown ]; then
         log "growing to $(blockdev --getsize64 /dev/loop0 2>/dev/null) bytes"
         umount /newroot 2>/dev/null
+        GREW=0
         if [ -x /usr/sbin/resize2fs ]; then
             # -p is preen mode: never prompts, which matters because there is no tty
-            [ -x /usr/sbin/e2fsck ] && /usr/sbin/e2fsck -fp /dev/loop0 >> /tmp/grow.log 2>&1
-            log "e2fsck rc=$?"
-            /usr/sbin/resize2fs /dev/loop0 >> /tmp/grow.log 2>&1
-            log "resize2fs rc=$?"
+            if [ -x /usr/sbin/e2fsck ]; then
+                /usr/sbin/e2fsck -fp /dev/loop0 >> /tmp/grow.log 2>&1
+                log "e2fsck rc=$?"
+            fi
+            if /usr/sbin/resize2fs /dev/loop0 >> /tmp/grow.log 2>&1; then
+                log "resize2fs ok"
+                GREW=1
+            else
+                log "resize2fs FAILED rc=$?"
+                cat /tmp/grow.log > /dev/console 2>/dev/null
+            fi
         else
             log "resize2fs missing"
         fi
-        flush
         mount -t ext4 -o rw /dev/loop0 /newroot 2>/dev/null
         log "remount rc=$?"
-        touch /newroot/.evergo-grown 2>/dev/null
-        log "marker rc=$?"
+        if [ "$GREW" = 1 ]; then
+            touch /newroot/.evergo-grown 2>/dev/null
+            log "marker written rc=$?"
+        else
+            log "grow did not complete - marker NOT written, will retry next boot"
+        fi
         df -h /newroot 2>/dev/null | tail -1 >> /tmp/grow.log
     elif [ -e /newroot/.evergo-grown ]; then
         log "already grown"
@@ -487,11 +480,8 @@ if [ -b /dev/sdc ]; then
 else
     log "no /dev/sdc"
 fi
-flush
-
 if [ -x /newroot/sbin/init ]; then
     log "switch_root"
-    flush
     echo V >&3 2>/dev/null
     exec 3>&- 2>/dev/null
     mkdir -p /newroot/dev /newroot/proc /newroot/sys /newroot/run
@@ -502,10 +492,19 @@ if [ -x /newroot/sbin/init ]; then
 fi
 
 log "no init, dropping to a shell"
-flush
-while : ; do /bin/sh; sleep 1; done
+while : ; do /bin/sh; delay 1; done
 INIT
 chmod 755 "$IR/init"
+
+# Fedora's dynamic loader only searches /usr/lib64 for these, and collect-libs.py
+# flattens everything into /usr/lib.  Without the mirror e2fsck exits with
+# "libext2fs.so.2: cannot open shared object file" and the grow silently does nothing.
+if [ -d "$IR/usr/lib" ]; then
+    mkdir -p "$IR/usr/lib64"
+    cp -a "$IR/usr/lib/." "$IR/usr/lib64/" 2>/dev/null || true
+    ln -sfn usr/lib64 "$IR/lib64" 2>/dev/null || true
+fi
+echo "  initramfs libs: $(ls "$IR/usr/lib" 2>/dev/null | wc -l) in usr/lib, $(ls "$IR/usr/lib64" 2>/dev/null | wc -l) in usr/lib64"
 
 say "build kernel with the initramfs"
 cd "$L"
@@ -534,8 +533,9 @@ python3 "$HERE/scripts/mkbootimg.py" \
     --ramdisk-offset 0x11100000 --tags-offset 0x7c80000 \
     --output "$WORK/boot-nofooter.img"
 
-python3 "$HERE/scripts/avb.py" \
-    --image "$WORK/boot-nofooter.img" \
+# The AVB footer stays.  It looks like dead weight on an unlocked bootloader, but this
+# LK refuses to jump to the kernel without it and simply sits on the Redmi logo.
+python3 "$HERE/scripts/avb.py" --image "$WORK/boot-nofooter.img" \
     --footer-template "$HERE/config/avb_footer.bin" \
     --vbmeta-template "$HERE/config/avb_vbmeta.bin" \
     --output "$OUT/boot.img"

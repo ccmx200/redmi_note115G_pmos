@@ -1,21 +1,32 @@
 name: build evergo images
 
-# Builds the two artifacts users need and publishes them as a release:
-#   boot.img         kernel + a small initramfs that mounts userdata and switches into it
-#   userdata.img.gz  Arch Linux ARM on f2fs, flashed to the userdata partition
+# Builds and publishes the images users flash:
+#   boot-<distro>-<ram>gib.img          kernel + initramfs that mounts userdata
+#   userdata-<distro>-<ram>gib.img.gz   the distribution itself, grown on first boot
 #
-# The kernel build has to happen here rather than locally: a cross-compiled kernel plus
-# a 6 GiB filesystem is not something to hand users from a laptop.
+# The kernel has to be built here rather than locally.  Each distro only differs in the
+# root filesystem, which scripts/distro-<name>.sh produces.
 
 on:
   push:
     branches: [main]
-    paths-ignore: ['README.md', 'docs/**']
+    paths-ignore:
+      - 'README.md'
+      - 'docs/**'
+      - '*.md'
   workflow_dispatch:
     inputs:
+      distro:
+        description: 'distribution'
+        type: choice
+        options: [arch, debian, ubuntu, fedora, all]
+        default: 'all'
+        required: true
       ram_gib:
-        description: 'RAM size of the handset (4, 6 or 8)'
-        default: '6'
+        description: 'RAM size (6 or 8; "all" builds both)'
+        type: choice
+        options: ['6', '8', 'all']
+        default: 'all'
         required: true
       panel:
         description: 'panel compatible (Tianma or CSOT)'
@@ -27,27 +38,49 @@ on:
         required: true
 
 env:
-  RAM_GIB: ${{ github.event.inputs.ram_gib || '6' }}
   PANEL: ${{ github.event.inputs.panel || 'k16a_36_02_0a_vdo,lcm' }}
   ROOTFS_MB: ${{ github.event.inputs.rootfs_mb || '6144' }}
-  # keep ccache inside the workspace so it is root-owned and cacheable regardless of
-  # which user the build ends up running as
   CCACHE_DIR: ${{ github.workspace }}/.ccache
 
-# publishing a release needs write access; new repositories default to read-only
 permissions:
   contents: write
 
 jobs:
+  # the matrix has to be computed in a job: `strategy.matrix` cannot read inputs directly
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - id: plan
+        run: |
+          distro="${{ github.event.inputs.distro || 'all' }}"
+          ram="${{ github.event.inputs.ram_gib || 'all' }}"
+          [ "$distro" = "all" ] && distros="arch debian ubuntu fedora" || distros="$distro"
+          [ "$ram"    = "all" ] && rams="6 8"                              || rams="$ram"
+          entries=""
+          for d in $distros; do
+            for r in $rams; do
+              [ -n "$entries" ] && entries="$entries,"
+              entries="$entries{\"distro\":\"$d\",\"ram\":\"$r\"}"
+            done
+          done
+          echo "matrix={\"include\":[$entries]}" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: plan
     runs-on: ubuntu-24.04
     timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    name: ${{ matrix.distro }} / ${{ matrix.ram }} GiB
     steps:
       - uses: actions/checkout@v4
 
       - name: free disk space
         run: |
-          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android || true
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /usr/lib/jvm || true
           df -h /
 
       - name: install build dependencies
@@ -56,65 +89,54 @@ jobs:
           sudo apt-get install -y -qq \
             gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
             ccache bc bison flex libssl-dev libelf-dev libncurses-dev \
-            cpio gzip xz-utils python3 device-tree-compiler e2fsprogs \
-            qemu-user-static android-sdk-libsparse-utils
+            cpio gzip xz-utils zstd p7zip-full python3 device-tree-compiler \
+            e2fsprogs qemu-user-static android-sdk-libsparse-utils \
+            mmdebstrap debootstrap dnf rpm debian-archive-keyring
           aarch64-linux-gnu-gcc --version | head -1
           mke2fs -V 2>&1 | head -1
           qemu-aarch64-static --version | head -1
-
-      - name: prepare loop devices and f2fs
-        # assembling the rootfs means mkfs.f2fs on a file and mounting it, which needs
-        # the loop driver and root.  Without this the build dies at
-        #   mount: failed to setup loop device
-        run: |
-          sudo modprobe loop || true
-          sudo modprobe f2fs || true
-          grep -E 'loop|f2fs' /proc/filesystems || true
-          ls -l /dev/loop* 2>/dev/null | head -5 || true
-          for i in $(seq 0 7); do sudo mknod -m 660 /dev/loop$i b 7 $i 2>/dev/null || true; done
-          sudo chown root:disk /dev/loop* 2>/dev/null || true
-          sudo chmod 660 /dev/loop* 2>/dev/null || true
-          sudo losetup -f || true
+          mmdebstrap --version | head -1
 
       - name: restore ccache
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/.ccache
-          key: evergo-ccache-${{ github.run_id }}
-          restore-keys: evergo-ccache-
+          key: evergo-ccache-${{ hashFiles('build.sh', 'config/evergo.config') }}-${{ matrix.ram }}
+          restore-keys: |
+            evergo-ccache-${{ hashFiles('build.sh', 'config/evergo.config') }}-
+            evergo-ccache-
 
       - name: build
-        # the build script mounts the f2fs image and chroots into it, so it must run as
-        # root; HOME is kept so the aarch64 toolchain and ccache resolve normally
+        # the build chroots into a directory, so it must run as root
         run: |
-          chmod +x build.sh
+          chmod +x build.sh scripts/*.sh
           sudo -E env "PATH=$PATH" "HOME=$HOME" "CCACHE_DIR=$CCACHE_DIR" \
-            "RAM_GIB=$RAM_GIB" "PANEL=$PANEL" "ROOTFS_MB=$ROOTFS_MB" ./build.sh
+            "DISTRO=${{ matrix.distro }}" \
+            "RAM_GIB=${{ matrix.ram }}" \
+            "PANEL=$PANEL" "ROOTFS_MB=$ROOTFS_MB" ./build.sh
 
       - name: ccache stats
         if: always()
         run: ccache -s || sudo ccache -s || true
 
-      - name: report artifacts
+      - name: rename artifacts
         run: |
-          ls -l out/
-          echo "--- boot.img header ---"
-          od -A d -t x1 -N 48 out/boot.img
-          echo "--- userdata: ext4? ---"
+          set -e
+          d="${{ matrix.distro }}"; r="${{ matrix.ram }}"
+          mkdir -p dist
+          cp out/boot.img          "dist/boot-${d}-${r}gib.img"
+          cp out/userdata.img.gz   "dist/userdata-${d}-${r}gib.img.gz"
+          (cd dist && sha256sum * > "SHA256SUM-${d}-${r}gib.txt")
+          ls -l dist/
+          echo "--- userdata is ext4? ---"
           file out/userdata.img || true
           dumpe2fs -h out/userdata.img 2>/dev/null | grep -E "volume name|Block count|Inode count" || true
-          echo "--- checksums ---"
-          sha256sum out/boot.img out/userdata.img.gz out/userdata.simg > out/SHA256SUMS || true
-          cat out/SHA256SUMS || true
 
       - name: upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: evergo-images
-          path: |
-            out/boot.img
-            out/userdata.img.gz
-            out/SHA256SUMS
+          name: evergo-${{ matrix.distro }}-${{ matrix.ram }}gib
+          path: dist/*
           retention-days: 14
 
       - name: publish release
@@ -122,56 +144,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
-          name: evergo build ${{ github.run_number }} (RAM ${{ env.RAM_GIB }} GiB)
-          body: |
-            Arch Linux ARM on the Redmi Note 11T 5G (evergo / MT6833), mainline Linux.
-
-            | item | value |
-            |---|---|
-            | RAM variant | ${{ env.RAM_GIB }} GiB |
-            | panel | `${{ env.PANEL }}` |
-            | rootfs | Arch Linux ARM, f2fs, ${{ env.ROOTFS_MB }} MiB |
-
-            ## flash
-
-            ```bash
-            fastboot flash boot_b  boot.img
-            fastboot -S 200M flash userdata userdata.simg   # or gunzip userdata.img.gz first
-            fastboot --set-active=b
-            fastboot reboot
-            ```
-
-            Both images are needed: `boot.img` carries the kernel and a small initramfs
-            that mounts the filesystem, `userdata.img.gz` is the filesystem itself.
-
-            ## first boot
-
-            There is **no serial console**. The phone comes up as a USB RNDIS network
-            device, so it is reached over the network instead:
-
-            * plugged into a **router's USB port** it is a DHCP client and joins that LAN
-              with internet access;
-            * plugged into a **PC** it always holds `169.254.42.1/16`, so this works with
-              no configuration at all:
-
-            ```bash
-            ssh root@169.254.42.1      # password: evergo
-            ```
-
-            The first login runs a short wizard that can create a normal user, set the
-            hostname and change the root password. SSH accepts passwords only - key
-            authentication is disabled.
-
-            `evergo-mode pc` switches `usb0` from a DHCP client to a DHCP server, so a
-            directly attached computer configures itself on `192.168.42.0/24`.
-
-            **This overwrites the userdata partition, so Android's user data is lost.**
-            `fastboot --set-active=a` returns to Android, which will then want to format
-            data again.
-          files: |
-            out/boot.img
-            out/userdata.img.gz
-            out/SHA256SUMS
+          name: evergo build ${{ github.run_number }}
+          body_path: .github/release-notes.md
+          files: dist/*
           fail_on_unmatched_files: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
