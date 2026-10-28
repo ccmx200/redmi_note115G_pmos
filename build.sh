@@ -414,8 +414,10 @@ delay() {
     _e=$(( $(_now) + _n )); while [ "$(_now)" -lt "$_e" ]; do :; done
 }
 
+# Log to a file only.  Printing to the console scrolls the kernel's Tux logo off the
+# screen, which is why no penguin was visible even though CONFIG_LOGO is enabled.
 log() {
-    echo "[init] $*"
+    echo "[init] $*" >> /tmp/init.log 2>/dev/null
 }
 
 mount -t proc     none /proc 2>/dev/null
