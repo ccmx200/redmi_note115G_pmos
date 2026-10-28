@@ -153,11 +153,16 @@ set -e
 # that Fedora's own rpm and dnf read.  Relocate it: otherwise the flashed image boots
 # with dnf/rpm believing that no package is installed, and the first `dnf install`
 # would try to install glibc and bash a second time.
-if [ -d "$R/root/.rpmdb" ]; then
+# The rpmdb location depends on $HOME: with root's home it is $R/root/.rpmdb, but CI
+# runs build.sh through `sudo -E` and keeps HOME=/home/runner, so it turns up under
+# $R/home/runner/.rpmdb instead.  Search for it rather than assuming.
+RPMDB_DIR=$(find "$R" -maxdepth 4 -type d -name .rpmdb 2>/dev/null | head -1)
+if [ -n "$RPMDB_DIR" ]; then
+    log "relocating rpmdb from ${RPMDB_DIR#"$R"} to /usr/lib/sysimage/rpm"
     mkdir -p "$R/usr/lib/sysimage/rpm"
     rm -f "$R"/usr/lib/sysimage/rpm/rpmdb.sqlite* "$R/usr/lib/sysimage/rpm/.rpm.lock"
-    mv "$R"/root/.rpmdb/rpmdb.sqlite* "$R/usr/lib/sysimage/rpm"/ 2>/dev/null || true
-    rm -rf "$R/root/.rpmdb"
+    mv "$RPMDB_DIR"/rpmdb.sqlite* "$R/usr/lib/sysimage/rpm"/ 2>/dev/null || true
+    rm -rf "$RPMDB_DIR"
 fi
 RPMDB="$R/usr/lib/sysimage/rpm/rpmdb.sqlite"
 [ -f "$RPMDB" ] || die "rpmdb missing at /usr/lib/sysimage/rpm (rpm/dnf in the image would not work)"
