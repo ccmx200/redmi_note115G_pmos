@@ -76,7 +76,10 @@ ssh root@169.254.42.1        # 密码 evergo
 | SSH 密码登录 | ✅ |
 | 硬件看门狗 | ✅ |
 
-**未完成**：PMIC、Wi-Fi / 蓝牙、基带、音频、相机、触摸固件、USB Host
+**未完成**：PMIC、**CPU 调频（cpufreq）**、Wi-Fi / 蓝牙、基带、音频、相机、触摸固件、USB Host
+
+> 🐌 因为没有 cpufreq，CPU 频率固定，USB 网络只有 **3.6 MB/s**（USB 2.0 HS 理论 60 MB/s）。
+> 详见 [踩坑记录](docs/TROUBLESHOOTING.md#-性能类)。
 
 ---
 

@@ -133,7 +133,7 @@ ssh root@169.254.42.1          # 密码：evergo
 | SSH 密码登录 | ✅ |
 | 硬件看门狗 | ✅ |
 
-**未完成**：PMIC、Wi-Fi / 蓝牙、基带、音频、相机、触摸固件、USB Host。
+**未完成**：PMIC、CPU 调频（cpufreq）、Wi-Fi / 蓝牙、基带、音频、相机、触摸固件、USB Host。
 
 ---
 

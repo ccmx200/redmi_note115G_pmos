@@ -174,6 +174,57 @@ E: Could not change permissions for temporary file ... - fchmod (1: Operation no
 
 ---
 
+## 🐌 性能类
+
+### USB 网络只有 3-4 MB/s
+
+**实测**（200 MB 传输）：
+
+| 方向 | 速度 |
+|:---|---:|
+| 手机 → PC | 3.59 MB/s（30 Mbps） |
+| PC → 手机 | 4.5 MB/s（36 Mbps） |
+
+**硬件上限**：MT6833 只有 **USB 2.0 High Speed**（480 Mbps = 60 MB/s），没有 USB 3。
+Bulk 传输的实际上限约 35-40 MB/s。
+
+**当前速度只有理论上限的 6%**，原因有四条：
+
+| # | 原因 | 证据 |
+|:---:|:---|:---|
+| 1 | **没有 cpufreq 驱动，CPU 频率固定** | `/sys/devices/system/cpu/cpu0/cpufreq` 不存在；`BogoMIPS: 26.00` |
+| 2 | USB 中断全压在 CPU 0 | `/proc/interrupts` 里 `musb-hdrc.1.auto` 只有第一列有计数 |
+| 3 | `g_ether` 不做包聚合 | `dmesg`: `g_ether ... version: Memorial Day 2008`；`ethtool -k usb0` 里 `tx-gso-list: off [fixed]` |
+| 4 | MUSB 控制器 FIFO 模式，无 DMA scatter-gather | `dmesg`: `musb-mtk 11200000.usb` |
+
+**已确认的事实**：
+
+- `current_speed = high-speed` —— **已经跑在 USB 2.0 高速模式**，不是 full-speed，所以改 `maximum-speed` 没有意义
+- `tx-checksumming: off` —— 没有校验和卸载，全靠 CPU
+
+**为什么不修 cpufreq**
+
+加调频驱动需要补 `mtk-cpufreq` / `CCI` / OPP 表，属于内核工作量较大的改动，
+而且这颗 SoC 的 DVFS 在 mainline 上还不完整。**本项目明确不做**，理由：
+
+1. 3.6 MB/s 对「SSH 管理 + 偶尔传文件」够用（200 MB 的包 55 秒）
+2. 改内核配置有把手机刷成砖的风险，而这台设备**没有串口兜底**
+3. 收益（8-12 MB/s）不值得这个风险
+
+**如果一定要提速，按性价比排序**：
+
+| 措施 | 预期 | 风险 |
+|:---|:---|:---|
+| USB 中断绑到空闲核（`echo <mask> > /proc/irq/149/smp_affinity`） | +10-20% | 低，重启即恢复 |
+| 内核参数 `g_ether.qmult=40` | +10-20% | 低，重刷即恢复 |
+| 换 CDC-NCM（`CONFIG_USB_CONFIGFS` + `f_ncm`，关掉 `g_ether`） | 2-3× | 中，gadget 起不来就失联 |
+| 补 cpufreq 驱动 | 2-3× | 高 | 
+
+> ⚠️ **NCM 和 cpufreq 都是「全有或全无」**：MUSB 只有一个 UDC，没法留 `g_ether` 做 fallback。
+> 改坏了只能 fastboot 重刷。
+
+---
+
 ## 网络类
 
 ### 插电脑 ping 不通
