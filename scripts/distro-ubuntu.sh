@@ -228,7 +228,7 @@ export QEMU_STATIC
     --components="$COMPONENTS" \
     --keyring="$KEYRING" \
     --include="$PACKAGES" \
-    --aptopt='Acquire::AllowInsecureRepositories "true"' \
+--aptopt='Acquire::AllowInsecureRepositories "true"' \
     --aptopt='Acquire::AllowDowngradeToInsecureRepositories "true"' \
     --setup-hook='mkdir -p "$1/usr/bin" && cp "$QEMU_STATIC" "$1/usr/bin/qemu-aarch64-static"' \
     --customize-hook="copy-in $CUSTOMIZE /tmp/" \

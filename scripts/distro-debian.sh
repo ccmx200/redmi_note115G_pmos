@@ -44,7 +44,7 @@ mmdebstrap \
     --variant=minbase \
     --components="main,contrib,non-free,non-free-firmware" \
     --include="$PKGS" \
-    --aptopt='Acquire::AllowInsecureRepositories "true"' \
+--aptopt='Acquire::AllowInsecureRepositories "true"' \
     --aptopt='Acquire::AllowDowngradeToInsecureRepositories "true"' \
     "$SUITE" "$R" "$MIRROR" 2>&1 | tail -12
 

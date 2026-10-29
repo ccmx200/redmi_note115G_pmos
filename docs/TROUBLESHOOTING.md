@@ -4,6 +4,57 @@
 
 ---
 
+## 🔁 重启循环类
+
+### 手机每 ~50 秒自己重启一次（看起来像「改主机名时重启」）
+
+**症状**：用着用着突然重启；`ping` 一会儿通一会儿不通；第一次登录向导走到某一步就重启。
+
+**真相**：这是硬件看门狗在复位，和向导做了什么**毫无关系**。50 秒 ≈ 31 秒看门狗超时 + 20 秒启动。向导只是刚好跑到那一步。
+
+**三个叠加的 bug**：
+
+| # | Bug | 后果 |
+|:---:|:---|:---|
+| 1 | initramfs 的 applet 列表**漏了 `awk`** | `delay()` 兜底用 `awk` 读 `/proc/uptime`，awk 不存在 → `_now` 恒为 0 → `while [ 0 -lt n ]` 永不退出 → **喂狗循环卡死** |
+| 2 | 喂狗循环**跨 `switch_root` 存活** | 一直占着 `/dev/watchdog` → systemd 服务报 `Device or resource busy` → 谁也喂不了 |
+| 3 | 服务用 `echo . > /dev/watchdog` | 每次**开-写-关**，`nowayout=0` 下**关闭即解除武装** → 从来没真正武装过 |
+
+**排查命令**（在能连上 SSH 的窗口里跑）：
+
+```bash
+# 看 /dev/watchdog 是否被占用
+echo . > /dev/watchdog        # 报 "Device or resource busy" 就是被占了
+# 找谁占着
+for p in /proc/[0-9]*; do ls -l $p/fd 2>/dev/null | grep -q watchdog && echo "$p $(cat $p/comm)"; done
+# 看内核日志
+dmesg | grep -i watchdog
+# 看服务
+systemctl status evergo-watchdog
+```
+
+**修复（3 处）**：
+
+1. initramfs applet 列表补 `awk usleep ps kill`
+2. init 在 `switch_root` 前 **kill 掉喂狗循环并关闭 fd**
+3. systemd 单元**保持 fd 打开**：
+
+```sh
+ExecStart=/bin/sh -c 'for d in /dev/watchdog0 /dev/watchdog; do [ -e "$d" ] && { exec 3>"$d"; break; }; done; [ -e /proc/self/fd/3 ] || exec sleep infinity; while : ; do echo . >&3 || break; sleep 10; done'
+```
+
+> ⚠️ 千万不要用 `echo . > /dev/watchdog` —— 关闭 fd 会解除武装，等于没喂。
+
+---
+
+### `watchdog0: watchdog did not stop!` 刷屏
+
+**原因**：用了 `echo . > /dev/watchdog` 这种开-写-关的写法，每次关闭内核都警告一次。
+
+**解法**：按上面的写法**保持 fd 打开**。
+
+---
+
 ## 启动类
 
 ### 卡在 Redmi logo 不动

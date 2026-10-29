@@ -273,6 +273,13 @@ ln -sf /usr/lib/systemd/system/systemd-networkd.socket "$R/etc/systemd/system/so
 ln -sf /etc/systemd/system/evergo-watchdog.service "$R/etc/systemd/system/sysinit.target.wants/evergo-watchdog.service" 2>/dev/null || true
 [ -e "$R/etc/systemd/system/default.target" ] || ln -sf /usr/lib/systemd/system/multi-user.target "$R/etc/systemd/system/default.target" 2>/dev/null || true
 
+# Some bootstraps (mmdebstrap in particular) leave /etc/hostname empty and only count on
+# the overlay to fill it; do it explicitly so the image is never hostnameless.
+printf 'evergo\n' > "$R/etc/hostname"
+if [ -f "$R/etc/hosts" ]; then
+    grep -q '^127\.0\.1\.1' "$R/etc/hosts" || echo '127.0.1.1 evergo' >> "$R/etc/hosts"
+fi
+
 say "rootfs: distro post-processing"
 
 # Services that try to reach the internet (or the cloud) during the first boot and can
