@@ -17,6 +17,7 @@ log() { printf '  %s\n' "$*"; }
 
 mkdir -p "$WORK"
 rm -rf "$R"
+mkdir -p "$R"
 mkdir -p "$(dirname "$R")"
 
 # Fedora publishes the WSL base as a plain tar; the container base is an OCI archive that

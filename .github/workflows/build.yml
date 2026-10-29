@@ -97,7 +97,6 @@ jobs:
           aarch64-linux-gnu-gcc --version | head -1
           mke2fs -V 2>&1 | head -1
           qemu-aarch64-static --version | head -1
-          mmdebstrap --version | head -1
 
       - name: restore ccache
         uses: actions/cache@v4

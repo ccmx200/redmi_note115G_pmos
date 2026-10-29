@@ -18,6 +18,10 @@ set -euo pipefail
 R="${1:?usage: rootfs_common_config <rootfs-dir> <kind>}"
 KIND="${2:?kind required}"
 
+# The caller extracts the rootfs here, but be defensive: a missing target must be
+# an error, not a weird "No such file or directory" from cp three lines later.
+[ -d "$R" ] || { echo "    !! rootfs dir $R does not exist"; exit 1; }
+
 log() { printf '    %s\n' "$*"; }
 
 TUNA_DEB="https://mirrors.tuna.tsinghua.edu.cn"

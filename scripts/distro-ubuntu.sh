@@ -17,6 +17,7 @@ log() { printf '  %s\n' "$*"; }
 
 mkdir -p "$WORK"
 rm -rf "$R"
+mkdir -p "$R"
 mkdir -p "$(dirname "$R")"
 
 TARBALL="$WORK/ubuntu-base-$VER-arm64.tar.gz"
