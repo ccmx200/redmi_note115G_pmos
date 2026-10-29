@@ -365,8 +365,11 @@ chmod 755 "$BB"
 cp "$BB" "$IR/bin/busybox"; chmod 755 "$IR/bin/busybox"
 # the init needs more than the bare minimum: dd and blockdev write the debug log and
 # report sizes, df/head/tail/grep print them, touch writes the grown marker
-for a in sh mount umount cat gzip losetup switch_root sleep echo ls mkdir ln sync \
-         dd blockdev df head tail grep sed touch cut; do
+# awk is not optional: delay() reads /proc/uptime with it.  When it was missing the
+# busy-wait never ended, the watchdog feed loop stopped pinging and the phone reset every
+# 31 seconds.  usleep is the preferred delay and ps/kill are needed to stop that loop.
+for a in sh mount umount cat gzip losetup switch_root sleep usleep echo ls mkdir ln sync \
+         dd blockdev df head tail grep sed touch cut awk ps kill killall; do
     ln -sf busybox "$IR/bin/$a"
 done
 # the kernel opens /dev/console before exec'ing init; with an initramfs present
@@ -449,10 +452,12 @@ log "init start"
 # LK arms the hardware watchdog for 31 s and nothing else feeds it yet.  Keep the fd
 # open across switch_root: re-opening /dev/watchdog afterwards fails, which is what
 # caused a reboot loop every ~33 s.
+WDT_PID=""
 if [ -e /dev/watchdog ]; then
     exec 3>/dev/watchdog
     ( while : ; do echo . >&3; delay 8; done ) &
-    log "watchdog fed"
+    WDT_PID=$!
+    log "watchdog fed (pid $WDT_PID)"
 fi
 
 # mirror the log continuously, so a hang still leaves a readable trace
@@ -503,8 +508,14 @@ else
 fi
 if [ -x /newroot/sbin/init ]; then
     log "switch_root"
+    # Stop the feed loop and close the fd before handing over.  Otherwise it survives
+    # switch_root holding /dev/watchdog open, the systemd unit gets EBUSY, nobody feeds
+    # the watchdog and the phone resets every 31 s.  nowayout=0, so closing the last
+    # reference disarms it cleanly and the unit can take over.
     echo V >&3 2>/dev/null
+    if [ -n "$WDT_PID" ]; then kill "$WDT_PID" 2>/dev/null; wait "$WDT_PID" 2>/dev/null; fi
     exec 3>&- 2>/dev/null
+    log "watchdog handed over to systemd"
     mkdir -p /newroot/dev /newroot/proc /newroot/sys /newroot/run
     mount --move /dev  /newroot/dev  2>/dev/null
     mount --move /proc /newroot/proc 2>/dev/null
