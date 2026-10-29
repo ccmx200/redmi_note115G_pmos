@@ -99,6 +99,27 @@ Server = https://mirrors.ustc.edu.cn/archlinuxarm/$arch/$repo
 Server = https://mirror.archlinuxarm.org/$arch/$repo
 ML
 
+# ---------------------------------------------------------------- trim ------
+# GitHub release assets are capped at 2 GiB and the sparse image of a stock Arch rootfs
+# is 2.2 GB.  These files are dead weight on the phone (the kernel is fully built in, so
+# the packaged modules are never loaded) and dropping them brings the spare image under
+# the limit:
+#   usr/lib/modules    186M
+#   usr/share/man       51M
+#   usr/share/doc       17M
+#   usr/share/i18n      17M
+log "trimming"
+rm -rf "$R"/usr/lib/modules/* \
+       "$R"/usr/share/man/* \
+       "$R"/usr/share/doc/* \
+       "$R"/usr/share/i18n/* \
+       "$R"/usr/share/gtk-doc \
+       "$R"/var/cache/* "$R"/var/lib/pacman/sync/* \\
+       "$R"/tmp/* 2>/dev/null || true
+mkdir -p "$R/usr/lib/modules" "$R/var/cache" "$R/var/lib/pacman/sync" "$R/tmp"
+chmod 1777 "$R/tmp"
+log "trimmed to $(du -sh "$R" | cut -f1)"
+
 # ---------------------------------------------------------------- clean -----
 rm -f "$R/usr/bin/qemu-aarch64-static"
 rm -f "$R/etc/hosts"; mv -f "$WORK/hosts.bak" "$R/etc/hosts"

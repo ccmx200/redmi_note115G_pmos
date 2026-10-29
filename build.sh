@@ -407,11 +407,30 @@ export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 # console filled with "sleep: not found", so this falls back to usleep and then to
 # polling /proc/uptime.
 _now() { awk '{printf "%d", $1}' /proc/uptime 2>/dev/null || echo 0; }
+
+# Probe the tools by running them, not with `command -v`: a dangling symlink passes
+# command -v and then fails at exec time, which is exactly how the console ended up
+# full of "sleep: not found".
+HAVE_SLEEP=0
+HAVE_USLEEP=0
+if sleep 0.05 >/dev/null 2>&1; then HAVE_SLEEP=1; fi
+if usleep 1000 >/dev/null 2>&1; then HAVE_USLEEP=1; fi
+
 delay() {
     _n=${1:-1}
-    if command -v sleep >/dev/null 2>&1; then sleep $_n; return 0; fi
-    if command -v usleep >/dev/null 2>&1; then usleep $((_n * 1000000)); return 0; fi
-    _e=$(( $(_now) + _n )); while [ "$(_now)" -lt "$_e" ]; do :; done
+    if [ "$HAVE_SLEEP" = 1 ]; then
+        sleep "$_n" 2>/dev/null && return 0
+    fi
+    if [ "$HAVE_USLEEP" = 1 ]; then
+        usleep $((_n * 1000000)) 2>/dev/null && return 0
+    fi
+    # last resort: poll the kernel clock.  Bounded so a broken clock cannot hang boot.
+    _e=$(( $(_now) + _n ))
+    _guard=0
+    while [ "$(_now)" -lt "$_e" ]; do
+        _guard=$((_guard + 1))
+        [ "$_guard" -gt 200000 ] && break
+    done
 }
 
 # Log to a file only.  Printing to the console scrolls the kernel's Tux logo off the

@@ -124,8 +124,17 @@ jobs:
           set -e
           d="${{ matrix.distro }}"; r="${{ matrix.ram }}"
           mkdir -p dist
+          # Ship the sparse image: it is what fastboot writes directly, so users
+          # download and flash without a gunzip + img2simg step first.
           cp out/boot.img          "dist/boot-${d}-${r}gib.img"
-          cp out/userdata.img.gz   "dist/userdata-${d}-${r}gib.img.gz"
+          cp out/userdata.simg     "dist/userdata-${d}-${r}gib.simg"
+          SZ=$(stat -c%s "dist/userdata-${d}-${r}gib.simg")
+          LIMIT=2147483648
+          if [ "$SZ" -gt "$LIMIT" ]; then
+              echo "::error::userdata-${d}-${r}gib.simg is $SZ bytes, over GitHub's 2 GiB asset limit"
+              exit 1
+          fi
+          echo "userdata-${d}-${r}gib.simg = $SZ bytes"
           (cd dist && sha256sum * > "SHA256SUM-${d}-${r}gib.txt")
           ls -l dist/
           echo "--- userdata is ext4? ---"
