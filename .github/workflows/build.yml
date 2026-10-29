@@ -86,14 +86,14 @@ jobs:
       - name: install build dependencies
         run: |
           sudo apt-get update -qq
-          # keep the runner's toolchain and libraries current; an old image is what makes
-          # mmdebstrap and dnf misbehave in subtle ways
+          # keep the runner's toolchain and libraries current; an old image is its own
+          # source of odd failures
           sudo DEBIAN_FRONTEND=noninteractive apt-get -y -qq upgrade
           sudo apt-get install -y -qq \
             gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
             ccache bc bison flex libssl-dev libelf-dev libncurses-dev \
             cpio gzip xz-utils zstd p7zip-full python3 device-tree-compiler \
-            e2fsprogs qemu-user-static android-sdk-libsparse-utils \
+            e2fsprogs qemu-user-static android-sdk-libsparse-utils
           aarch64-linux-gnu-gcc --version | head -1
           mke2fs -V 2>&1 | head -1
           qemu-aarch64-static --version | head -1
