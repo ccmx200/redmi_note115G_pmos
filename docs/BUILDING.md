@@ -98,23 +98,50 @@ ARCH_TARBALL=/path/ArchLinuxARM-aarch64-latest.tar.gz ./build.sh
 
 ## 多发行版机制
 
-每个发行版一个脚本，接口统一：
+**核心原则：用官方预构建的 rootfs，不自己 bootstrap。**
+
+| 发行版 | 官方源文件 | 来源 |
+|:---|:---|:---|
+| Arch | `ArchLinuxARM-aarch64-latest.tar.gz` | archlinuxarm.org / 清华 |
+| Debian | `debian-13-generic-arm64.tar.xz` | cloud.debian.org |
+| Ubuntu | `ubuntu-base-26.04-base-arm64.tar.gz` | cdimage.ubuntu.com / 清华 |
+| Fedora | `Fedora-WSL-Base-44-*.aarch64.wsl`（plain tar） | 清华 / USTC |
+
+**为什么不用 debootstrap / mmdebstrap / dnf --installroot**
+
+| 问题 | 说明 |
+|:---|:---|
+| 密钥轮换 | `debian-archive-keyring` 旧了签不了新版，构建直接挂 |
+| 宿主污染 | mmdebstrap 依赖宿主的 apt 配置、代理、架构支持 |
+| 报错难读 | 一行 `apt-get 失败` 背后可能是 20 个包 403 |
+| 慢 | 从零装 300+ 包要十几分钟，解压官方包只要几秒 |
+| 会漂移 | 同一份 script 在不同日期构建，结果不同 |
+
+官方 tarball 是**别人已经构建好的成品**，解压即得，不会漂。
+
+### 脚本分工
 
 ```
-scripts/distro-<name>.sh <rootfs-dir>
+scripts/distro-arch.sh      Arch 专属（tarball + pacman -Syu）
+scripts/distro-debian.sh    Debian 专属（下载 + 解压 + 调 common）
+scripts/distro-ubuntu.sh    Ubuntu 专属（下载 + 解压 + 调 common）
+scripts/distro-fedora.sh    Fedora 专属（下载 + 解压 + 调 common）
+scripts/distro-common.sh    debian/ubuntu/fedora 的公共配置
 ```
 
-脚本负责把 `rootfs-dir` 填成一个**可启动的根文件系统**：装基础系统、设 root 密码、配国内源、enable 服务。**不需要关心内核、镜像、打包**。
+`distro-common.sh` 干的事（这些是**真正的发行版特定工作**）：
 
-`build.sh` 负责：
-
-```bash
-bash "$HERE/scripts/distro-$DISTRO.sh" "$R"   # 填目录
-tar xzf rootfs-overlay.tar.gz -C "$R"          # 套定制层
-mke2fs -d "$R" "$ROOTIMG"                      # 生成镜像
-```
+1. **换源** —— 清华镜像 + `Acquire::ForceIPv4`
+2. **全量升级** —— `apt upgrade` + `full-upgrade` / `dnf upgrade`
+3. **装必需包** —— `openssh-server`、`e2fsprogs`、`sudo`、`iproute2` 等
+4. **设密码** —— `echo root:evergo | chpasswd`
+5. **设主机名** —— `evergo`
+6. **mask 掉会卡首启的服务** —— NetworkManager、cloud-init、ubuntu-advantage、apt-daily
+7. **验证** —— sshd / e2fsck / resize2fs / systemd / root 密码哈希，缺一个就 `exit 1`
 
 ### 定制层 `rootfs-overlay.tar.gz`
+
+所有发行版共用，`build.sh` 在 distro 脚本之后套上去：
 
 | 文件 | 作用 |
 |:---|:---|
@@ -123,26 +150,25 @@ mke2fs -d "$R" "$ROOTIMG"                      # 生成镜像
 | `/usr/local/bin/evergo-first-login` | 首次登录向导 |
 | `/etc/profile.d/00-evergo-welcome.sh` | 欢迎界面 + 触发向导 |
 | `/etc/systemd/network/10-usb0.network` | usb0 配置 |
-| `/etc/systemd/system/evergo-watchdog.service` | 看门狗喂狗 |
+| `/etc/systemd/system/evergo-watchdog.service` | 喂狗（保持 fd 打开） |
 | `/etc/ssh/sshd_config.d/10-bringup.conf` | 只允许密码登录 |
 | `/etc/evergo/fastfetch.jsonc` | 欢迎界面配置 |
-| `/etc/fstab`, `/etc/hosts`, `/etc/hostname` | 基础配置 |
 
 ### 加新发行版
 
-1. 写 `scripts/distro-<name>.sh`，接收目录参数，填出可启动的 rootfs
-2. 在 `.github/workflows/build.yml` 的 `plan` job 里加上名字
-3. 在 `build.sh` 的 `case "$DISTRO"` 里处理发行版差异（如删掉 Arch 的 pacman 配置）
+1. 找一个**官方预构建 rootfs tarball**（不是 installer，不是 bootstrap）
+2. 写 `scripts/distro-<name>.sh`：下载 + 解压到 `$1`
+3. 在 `scripts/distro-common.sh` 的 `case` 里加一个分支（换源 / 升级 / 装包 / 设密码）
+4. 在 `.github/workflows/build.yml` 的 `plan` job 里加上名字
+5. 在 `build.sh` 的 `case "$DISTRO"` 里处理残留文件差异（如删掉 Arch 的 pacman 配置）
 
 **必须满足**：
 
 - `/sbin/init` 或 `/usr/lib/systemd/systemd` 存在
 - `/usr/sbin/sshd`、`/usr/sbin/e2fsck`、`/usr/sbin/resize2fs` 存在
-- root 密码已设（`echo root:evergo | chpasswd`）
+- root 密码已设、主机名已设
 - 国内源已配置
 - 首启会卡住的联网服务已 mask
-
----
 
 ## 环境变量
 
