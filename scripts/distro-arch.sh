@@ -74,7 +74,9 @@ chroot "$R" /usr/bin/qemu-aarch64-static /usr/bin/bash -c '
 set -e
 pacman-key --init >/dev/null 2>&1
 pacman-key --populate archlinuxarm >/dev/null 2>&1
-pacman -Sy --noconfirm >/dev/null
+# Full upgrade, not just a sync: the tarball is a monthly snapshot, so -Sy alone
+# would keep shipping packages that are weeks out of date.
+pacman -Syu --noconfirm >/dev/null
 pacman -S --noconfirm --needed \
   btop htop fastfetch git wget curl nano vim tmux rsync unzip zip file less \
   man-db which pacman-contrib net-tools bind-tools iputils traceroute mtr whois \

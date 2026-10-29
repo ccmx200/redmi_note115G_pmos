@@ -229,6 +229,46 @@ fi
 bash "$HERE/scripts/distro-$DISTRO.sh" "$R" || { echo "  !! rootfs build failed"; exit 1; }
 echo "  $(du -sh "$R" | cut -f1) in $R"
 
+say "rootfs: upgrade to the latest packages"
+
+# Never ship a stale base.  The Arch tarball is a monthly snapshot, mmdebstrap installs
+# whatever the index said at bootstrap time, and dnf resolves against cached metadata -
+# all three can leave a freshly built image weeks behind.  Run each distro's own full
+# upgrade here, before the overlay and before the image is written.
+case "$DISTRO" in
+arch)
+    # distro-arch.sh already runs `pacman -Syu`; nothing more to do
+    echo "  arch: upgraded in distro-arch.sh"
+    ;;
+debian|ubuntu)
+    cp -f /usr/bin/qemu-aarch64-static "$R/usr/bin/qemu-aarch64-static"
+    chroot "$R" /usr/bin/qemu-aarch64-static /bin/sh -c '
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get update
+        apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold upgrade
+        apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold full-upgrade
+        apt-get -y autoremove --purge
+        apt-get clean
+        rm -rf /var/lib/apt/lists/*
+    ' 2>&1 | tail -6 | sed 's/^/  /'
+    rm -f "$R/usr/bin/qemu-aarch64-static"
+    echo "  debian/ubuntu: upgraded"
+    ;;
+fedora)
+    cp -f /usr/bin/qemu-aarch64-static "$R/usr/bin/qemu-aarch64-static"
+    chroot "$R" /usr/bin/qemu-aarch64-static /bin/sh -c '
+        dnf -y --refresh upgrade
+        dnf -y clean all
+    ' 2>&1 | tail -6 | sed 's/^/  /'
+    rm -f "$R/usr/bin/qemu-aarch64-static"
+    ;;
+*)
+    echo "  $DISTRO: no upgrade step defined"
+    ;;
+esac
+# the stray qemu binary must never end up in the image
+rm -f "$R/usr/bin/qemu-aarch64-static"
+
 say "rootfs: apply the evergo overlay"
 tar xzf "$HERE/rootfs-overlay.tar.gz" -C "$R" --numeric-owner
 chmod 755 "$R/usr/local/bin/evergo-mode" "$R/usr/local/bin/evergo-info" "$R/usr/local/bin/evergo-first-login" 2>/dev/null || true

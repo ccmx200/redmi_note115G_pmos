@@ -86,6 +86,9 @@ jobs:
       - name: install build dependencies
         run: |
           sudo apt-get update -qq
+          # keep the runner's toolchain and libraries current; an old image is what makes
+          # mmdebstrap and dnf misbehave in subtle ways
+          sudo DEBIAN_FRONTEND=noninteractive apt-get -y -qq upgrade
           sudo apt-get install -y -qq \
             gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
             ccache bc bison flex libssl-dev libelf-dev libncurses-dev \
