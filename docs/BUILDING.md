@@ -188,6 +188,23 @@ mke2fs -d "$R" "$ROOTIMG"                      # 生成镜像
 
 见 [多发行版机制](#多发行版机制)。
 
+装完一定要**升级到最新**，否则镜像里是几周前的包：
+
+| 发行版 | 升级命令 | 位置 |
+|:---|:---|:---|
+| Arch | `pacman -Syu` | `scripts/distro-arch.sh` |
+| Debian / Ubuntu | `apt-get update` → `upgrade` → `full-upgrade` → `autoremove` | `build.sh` 统一处理 |
+| Fedora | `dnf -y --refresh upgrade` | `build.sh` 统一处理 |
+
+**为什么必须升级**：
+
+- **Arch** 的官方 tarball 是**月度快照**，`pacman -Sy` 只同步索引不升级包
+- **mmdebstrap** 按 bootstrap 那一刻的索引装包，之后不会再动
+- **dnf** 会用缓存的 metadata 解析依赖
+
+> 💡 apt 升级加了 `--force-confold`，升级时保留原配置文件，**不会中途弹交互提示**。
+> 升级结束后会删掉 `/var/lib/apt/lists/*` 缩体积，并把临时拷进去的 qemu 二进制清理掉。
+
 ### 3. initramfs
 
 **4.7 MB**，静态 busybox + e2fsck + resize2fs + 依赖库：
