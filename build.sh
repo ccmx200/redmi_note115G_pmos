@@ -382,7 +382,7 @@ cp "$BB" "$IR/bin/busybox"; chmod 755 "$IR/bin/busybox"
 # 31 seconds.  usleep is the preferred delay and ps/kill are needed to stop that loop.
 for a in sh mount umount cat gzip losetup switch_root sleep usleep echo ls mkdir ln sync \
          dd blockdev df head tail grep sed touch cut awk ps kill killall \
-         rm rmdir find ifconfig; do
+         rm rmdir find ifconfig tc sysctl; do
     ln -sf busybox "$IR/bin/$a"
 done
 # the kernel opens /dev/console before exec'ing init; with an initramfs present
@@ -474,7 +474,11 @@ mkdir -p /newroot /tmp
 setup_usb_gadget
 GADGET_RC=$?
 ifconfig usb0 169.254.42.1 netmask 255.255.0.0 up 2>/dev/null
-log "usb0: $(ifconfig usb0 2>/dev/null | awk '/inet addr/{print $2}' | cut -d: -f2) (gadget rc=$GADGET_RC)"
+# BBR wants an fq queue; the interface is created here, so the default qdisc never gets
+# a chance to be applied by sysctl
+tc qdisc replace dev usb0 root fq 2>/dev/null || true
+sysctl -w net.ipv4.tcp_congestion_control=bbr >/dev/null 2>&1 || true
+log "usb0: $(ifconfig usb0 2>/dev/null | awk '/inet addr/{print $2}' | cut -d: -f2) qdisc=$(tc qdisc show dev usb0 2>/dev/null | head -1 | awk '{print $2}') cc=$(cat /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null)"
 : > /tmp/grow.log
 log "init start"
 
