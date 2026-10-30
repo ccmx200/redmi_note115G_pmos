@@ -381,7 +381,8 @@ cp "$BB" "$IR/bin/busybox"; chmod 755 "$IR/bin/busybox"
 # busy-wait never ended, the watchdog feed loop stopped pinging and the phone reset every
 # 31 seconds.  usleep is the preferred delay and ps/kill are needed to stop that loop.
 for a in sh mount umount cat gzip losetup switch_root sleep usleep echo ls mkdir ln sync \
-         dd blockdev df head tail grep sed touch cut awk ps kill killall; do
+         dd blockdev df head tail grep sed touch cut awk ps kill killall \
+         rm rmdir find ifconfig; do
     ln -sf busybox "$IR/bin/$a"
 done
 # the kernel opens /dev/console before exec'ing init; with an initramfs present
@@ -399,6 +400,12 @@ for tool in /usr/sbin/e2fsck /usr/sbin/resize2fs; do
         echo "  !! $tool missing from the rootfs, first-boot growth disabled"
     fi
 done
+
+# CDC-NCM gadget helper: the kernel no longer builds the legacy g_ether gadget, so the
+# USB network interface is created here through configfs.  NCM (packet aggregation) is
+# tried first, RNDIS second.
+cp -f "$HERE/config/gadget-setup.sh" "$IR/gadget-setup.sh"
+chmod 644 "$IR/gadget-setup.sh"
 
 cat > "$IR/init" <<'INIT'
 #!/bin/sh
@@ -458,6 +465,16 @@ mount -t proc     none /proc 2>/dev/null
 mount -t sysfs    none /sys  2>/dev/null
 mount -t devtmpfs none /dev  2>/dev/null
 mkdir -p /newroot /tmp
+
+# ------------------------------------------------------------------ usb gadget --
+# There is no built-in g_ether any more (its single UDC has to stay free for configfs),
+# so the network interface is created here.  usb0 comes up before the disk work, which
+# means the phone is reachable even while the filesystem is being grown.
+. /gadget-setup.sh
+setup_usb_gadget
+GADGET_RC=$?
+ifconfig usb0 169.254.42.1 netmask 255.255.0.0 up 2>/dev/null
+log "usb0: $(ifconfig usb0 2>/dev/null | awk '/inet addr/{print $2}' | cut -d: -f2) (gadget rc=$GADGET_RC)"
 : > /tmp/grow.log
 log "init start"
 

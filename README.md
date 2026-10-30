@@ -72,7 +72,7 @@ ssh root@169.254.42.1        # 密码 evergo
 | 主控 MT6833 / 天玑 810（8 核） | ✅ |
 | 存储 128 GB eMMC → 自动扩到 106 GiB | ✅ |
 | 显示（`mediatekdrmfb` 帧缓冲控制台） | ✅ |
-| USB RNDIS 网络（高速模式，~4.5 MB/s） | ✅ |
+| CDC-NCM（426 Mbps 链路，实测 ~5.2 MB/s）（高速模式，~4.5 MB/s） | ✅ |
 | SSH 密码登录 | ✅ |
 | 硬件看门狗 | ✅ |
 

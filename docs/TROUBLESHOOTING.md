@@ -176,52 +176,72 @@ E: Could not change permissions for temporary file ... - fchmod (1: Operation no
 
 ## 🐌 性能类
 
-### USB 网络只有 3-4 MB/s
+### USB 网络速度
 
-**实测**（200 MB 传输）：
+**实测**（200 MB 传输，手机 → PC）：
 
-| 方向 | 速度 |
-|:---|---:|
-| 手机 → PC | 3.59 MB/s（30 Mbps） |
-| PC → 手机 | 4.5 MB/s（36 Mbps） |
+| 方案 | 吞吐 | 链路速度 | 相对 |
+|:---|---:|---:|---:|
+| RNDIS（旧 `g_ether`） | 3.59 MB/s（30 Mbps） | — | 基准 |
+| **CDC-NCM（当前）** | **5.24 MB/s（44 Mbps）** | **426 Mbps** | **+46%** |
+| NCM + USB 中断绑核 | 5.23 MB/s | 426 Mbps | 无变化 |
+| NCM + `txqueuelen 4000` | 5.23 MB/s | 426 Mbps | 无变化 |
+| NCM + MTU 9000 | 5.24 MB/s | 426 Mbps | 无变化（PC 端需管理员） |
 
-**硬件上限**：MT6833 只有 **USB 2.0 High Speed**（480 Mbps = 60 MB/s），没有 USB 3。
-Bulk 传输的实际上限约 35-40 MB/s。
+**硬件上限**：MT6833 只有 USB 2.0 High Speed（480 Mbps = 60 MB/s），Bulk 实际 35-40 MB/s。
 
-**当前速度只有理论上限的 6%**，原因有四条：
+**为什么只有 44 Mbps**：瓶颈是 **CPU**，不是 USB 链路。链路已经跑到 426 Mbps
+（达 RNDIS 时的 14 倍），但内核里**没有 cpufreq 驱动**，CPU 频率固定，而
+USB gadget 的收发全是软件拷贝，频率上不去吞吐就上不去。
 
-| # | 原因 | 证据 |
-|:---:|:---|:---|
-| 1 | **没有 cpufreq 驱动，CPU 频率固定** | `/sys/devices/system/cpu/cpu0/cpufreq` 不存在；`BogoMIPS: 26.00` |
-| 2 | USB 中断全压在 CPU 0 | `/proc/interrupts` 里 `musb-hdrc.1.auto` 只有第一列有计数 |
-| 3 | `g_ether` 不做包聚合 | `dmesg`: `g_ether ... version: Memorial Day 2008`；`ethtool -k usb0` 里 `tx-gso-list: off [fixed]` |
-| 4 | MUSB 控制器 FIFO 模式，无 DMA scatter-gather | `dmesg`: `musb-mtk 11200000.usb` |
+其他证据：
 
-**已确认的事实**：
+| 现象 | 证据 |
+|:---|:---|
+| 没有调频 | `/sys/devices/system/cpu/cpu0/cpufreq` 不存在 |
+| gadget 不做聚合 | `tx-gso-list: off [fixed]` |
+| 无校验和卸载 | `tx-checksumming: off` |
+| MUSB 中断集中 | `/proc/interrupts` 里 `musb-hdrc.1.auto` 单行 |
 
-- `current_speed = high-speed` —— **已经跑在 USB 2.0 高速模式**，不是 full-speed，所以改 `maximum-speed` 没有意义
-- `tx-checksumming: off` —— 没有校验和卸载，全靠 CPU
+> 💡 **中断绑核和 txqueuelen 实测无效** —— 说明瓶颈确实在单核拷贝速度，不在调度。
 
-**为什么不修 cpufreq**
+### 为什么用 CDC-NCM 而不是继续用 RNDIS
 
-加调频驱动需要补 `mtk-cpufreq` / `CCI` / OPP 表，属于内核工作量较大的改动，
-而且这颗 SoC 的 DVFS 在 mainline 上还不完整。**本项目明确不做**，理由：
+`g_ether` 是 2008 年的老 gadget，**每个以太网帧一次 USB 传输**，不做聚合。
+CDC-NCM 把多个帧装进一个 USB 传输（NTB），所以少了一半以上的中断和拷贝。
 
-1. 3.6 MB/s 对「SSH 管理 + 偶尔传文件」够用（200 MB 的包 55 秒）
-2. 改内核配置有把手机刷成砖的风险，而这台设备**没有串口兜底**
+**配置**（`config/evergo.config`）：
+
+```
+CONFIG_USB_CONFIGFS=y
+CONFIG_USB_CONFIGFS_NCM=y
+CONFIG_USB_F_NCM=y
+CONFIG_USB_F_RNDIS=y          # 保留做 fallback
+CONFIG_USB_CONFIGFS_RNDIS=y
+CONFIG_USB_ETH is not set     # 关掉 g_ether，腾出唯一的 UDC
+```
+
+**为什么不怕改坏**：`f_ncm` 和 `f_rndis` 都是 **configfs 函数**，initramfs 里
+`config/gadget-setup.sh` 先试 NCM、失败自动退 RNDIS。两个都不依赖 `g_ether`，
+所以即使 gadget 完全起不来，也能 fastboot 重刷回滚镜像恢复。
+
+### 为什么不做 cpufreq
+
+加调频驱动要补 `mtk-cpufreq` / `CCI` / OPP 表，是内核级大改动。**本项目明确不做**：
+
+1. 5.2 MB/s 对「SSH 管理 + 偶尔传文件」够用
+2. 改内核有把手机刷成砖的风险，这台设备**没有串口兜底**
 3. 收益（8-12 MB/s）不值得这个风险
 
-**如果一定要提速，按性价比排序**：
+### 如果要继续提速
 
 | 措施 | 预期 | 风险 |
 |:---|:---|:---|
-| USB 中断绑到空闲核（`echo <mask> > /proc/irq/149/smp_affinity`） | +10-20% | 低，重启即恢复 |
-| 内核参数 `g_ether.qmult=40` | +10-20% | 低，重刷即恢复 |
-| 换 CDC-NCM（`CONFIG_USB_CONFIGFS` + `f_ncm`，关掉 `g_ether`） | 2-3× | 中，gadget 起不来就失联 |
-| 补 cpufreq 驱动 | 2-3× | 高 | 
-
-> ⚠️ **NCM 和 cpufreq 都是「全有或全无」**：MUSB 只有一个 UDC，没法留 `g_ether` 做 fallback。
-> 改坏了只能 fastboot 重刷。
+| USB 中断绑核 | 实测 **无效** | — |
+| `txqueuelen` 加长 | 实测 **无效** | — |
+| MTU 9000（两端都改，PC 需管理员） | 未测出收益 | 低 |
+| 补 cpufreq 驱动 | 2-3× | 高 |
+| 换 MUSB 到 DMA 模式 | 未知 | 高 |
 
 ---
 
