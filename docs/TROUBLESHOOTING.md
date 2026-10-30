@@ -176,34 +176,56 @@ E: Could not change permissions for temporary file ... - fchmod (1: Operation no
 
 ## 🐌 性能类
 
-### USB 网络速度
+### USB 网络速度实测
 
-**实测**（200 MB 传输，手机 → PC）：
+| 方向 | 吞吐 | 说明 |
+|:---|---:|:---|
+| 手机 → PC（NCM，1 GiB 持续） | **9.04 MB/s（76 Mbps）** | 最可靠的数据 |
+| 手机 → PC（NCM，12 秒窗口） | 10.93 MB/s | 短时峰值 |
+| 手机 → PC（NCM，256 MB） | 5.91 MB/s | 含慢启动 |
+| PC → 手机（NCM，256 MB） | 5.56 MB/s | — |
+| 手机 → PC（旧 RNDIS） | 3.59 MB/s（30 Mbps） | 基准 |
 
-| 方案 | 吞吐 | 链路速度 | 相对 |
-|:---|---:|---:|---:|
-| RNDIS（旧 `g_ether`） | 3.59 MB/s（30 Mbps） | — | 基准 |
-| **CDC-NCM（当前）** | **5.24 MB/s（44 Mbps）** | **426 Mbps** | **+46%** |
-| NCM + USB 中断绑核 | 5.23 MB/s | 426 Mbps | 无变化 |
-| NCM + `txqueuelen 4000` | 5.23 MB/s | 426 Mbps | 无变化 |
-| NCM + MTU 9000 | 5.24 MB/s | 426 Mbps | 无变化（PC 端需管理员） |
+**NCM 相对 RNDIS 提升约 2.5 倍**，链路速度从 30 Mbps 提到 **426 Mbps**。
 
-**硬件上限**：MT6833 只有 USB 2.0 High Speed（480 Mbps = 60 MB/s），Bulk 实际 35-40 MB/s。
+### 瓶颈在哪里 —— 是 MUSB 控制器，不是 CPU
 
-**为什么只有 44 Mbps**：瓶颈是 **CPU**，不是 USB 链路。链路已经跑到 426 Mbps
-（达 RNDIS 时的 14 倍），但内核里**没有 cpufreq 驱动**，CPU 频率固定，而
-USB gadget 的收发全是软件拷贝，频率上不去吞吐就上不去。
+一开始怀疑 CPU（因为没有 cpufreq 驱动），实测推翻了这个猜测：
 
-其他证据：
+**测量方法**：传输期间抓 `/proc/stat` 和 `/proc/interrupts` 的前后快照，算每核占用。
 
-| 现象 | 证据 |
+```
+传输期间每核占用
+  cpu0   2.8%
+  cpu1   1.1%
+  cpu2  63.3%    ← USB 中断全在这里
+  cpu3   0.5%
+  cpu4   1.2%
+  cpu5   2.4%
+  cpu6   0.1%
+  cpu7   0.0%
+```
+
+| 假设 | 实测 | 结论 |
+|:---|:---|:---|
+| CPU 跑满 | 最忙核心 **63%** | ❌ 不是 CPU |
+| 多核没利用 | musb 中断 175,996 次全在 CPU 2 | ✅ 确实是单核 |
+| 软中断堆积 | RPS 摊到 CPU 4-7，速度 **+0%** | ❌ 不是软中断 |
+| 纯内核锁 | RPS 无效 + CPU 有余量 | ❌ 不是锁 |
+| **MUSB 硬件** | 9 MB/s ÷ 8000 微帧 ≈ 1125 B/微帧 | ✅ **就是它** |
+
+**原理**：USB 2.0 高速的 Bulk 传输每 **125 µs** 一个微帧，理论上能塞 13 个 512B 包（≈53 MB/s）。
+**MUSB 是 FIFO 架构，没有 DMA scatter-gather**，实测每微帧只走约 **2 个包**（1125 B），
+所以卡在 9 MB/s。这是**控制器硬件限制，不是软件能调的**。
+
+**这解释了为什么这些调整全部无效**：
+
+| 调整 | 结果 |
 |:---|:---|
-| 没有调频 | `/sys/devices/system/cpu/cpu0/cpufreq` 不存在 |
-| gadget 不做聚合 | `tx-gso-list: off [fixed]` |
-| 无校验和卸载 | `tx-checksumming: off` |
-| MUSB 中断集中 | `/proc/interrupts` 里 `musb-hdrc.1.auto` 单行 |
-
-> 💡 **中断绑核和 txqueuelen 实测无效** —— 说明瓶颈确实在单核拷贝速度，不在调度。
+| USB 中断绑到 CPU 2 | 无效（单核本来就没跑满） |
+| RPS 软中断摊到 4 核 | **+0%** |
+| `txqueuelen` 加到 4000 | 无效 |
+| MTU 9000 | PC 端要管理员权限，未测出收益 |
 
 ### 为什么用 CDC-NCM 而不是继续用 RNDIS
 
@@ -222,26 +244,25 @@ CONFIG_USB_ETH is not set     # 关掉 g_ether，腾出唯一的 UDC
 ```
 
 **为什么不怕改坏**：`f_ncm` 和 `f_rndis` 都是 **configfs 函数**，initramfs 里
-`config/gadget-setup.sh` 先试 NCM、失败自动退 RNDIS。两个都不依赖 `g_ether`，
-所以即使 gadget 完全起不来，也能 fastboot 重刷回滚镜像恢复。
+`config/gadget-setup.sh` 先试 NCM、失败自动退 RNDIS。两个都不依赖 `g_ether`。
 
 ### 为什么不做 cpufreq
 
-加调频驱动要补 `mtk-cpufreq` / `CCI` / OPP 表，是内核级大改动。**本项目明确不做**：
+即使做了也没用 —— **CPU 只有 63% 占用**，瓶颈在 USB 控制器。所以**本项目明确不做**：
 
-1. 5.2 MB/s 对「SSH 管理 + 偶尔传文件」够用
-2. 改内核有把手机刷成砖的风险，这台设备**没有串口兜底**
-3. 收益（8-12 MB/s）不值得这个风险
+1. 实测证明 CPU 有余量，调频不会提速
+2. 加 `mtk-cpufreq` / `CCI` / OPP 是内核级大改动，有刷砖风险
+3. 这台设备**没有串口兜底**
 
-### 如果要继续提速
+### 如果还要继续提速
 
 | 措施 | 预期 | 风险 |
 |:---|:---|:---|
-| USB 中断绑核 | 实测 **无效** | — |
-| `txqueuelen` 加长 | 实测 **无效** | — |
-| MTU 9000（两端都改，PC 需管理员） | 未测出收益 | 低 |
-| 补 cpufreq 驱动 | 2-3× | 高 |
-| 换 MUSB 到 DMA 模式 | 未知 | 高 |
+| 中断绑核 / RPS / txqueuelen | **实测全部无效** | — |
+| 让 MUSB 走 DMA（改控制器驱动） | 未知，可能 2-3× | 高，动内核驱动 |
+| 换 USB 3.0 | **不可能**（MT6833 只有 USB 2.0） | — |
+
+**结论：9 MB/s 就是这台设备在当前内核下的实际上限。**
 
 ---
 
