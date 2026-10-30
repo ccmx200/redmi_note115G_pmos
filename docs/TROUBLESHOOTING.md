@@ -254,15 +254,45 @@ CONFIG_USB_ETH is not set     # 关掉 g_ether，腾出唯一的 UDC
 2. 加 `mtk-cpufreq` / `CCI` / OPP 是内核级大改动，有刷砖风险
 3. 这台设备**没有串口兜底**
 
-### 如果还要继续提速
+### 所有软件调优都试过了，全部无效
 
-| 措施 | 预期 | 风险 |
-|:---|:---|:---|
-| 中断绑核 / RPS / txqueuelen | **实测全部无效** | — |
-| 让 MUSB 走 DMA（改控制器驱动） | 未知，可能 2-3× | 高，动内核驱动 |
-| 换 USB 3.0 | **不可能**（MT6833 只有 USB 2.0） | — |
+| 尝试 | 结果 |
+|:---|:---|
+| USB 中断绑到 CPU 2 | 无效（单核本来就只 63%） |
+| RPS 软中断摊到 CPU 4-7 | **+0.2%** |
+| `txqueuelen` 加到 4000 | 无效 |
+| TCP 缓冲区加到 16M（`rmem_max`/`wmem_max`/`tcp_rmem`/`tcp_wmem`） | **+0.9%**（9.04 → 9.12） |
+| `ethtool -K usb0 gso on` | ❌ `Could not change any device features` |
+| `ethtool -K usb0 tso on` | ❌ `tx-tcp-segmentation: off [fixed]` |
+| `ethtool -K usb0 sg on` | ❌ `tx-scatter-gather: off [fixed]` |
+| MTU 9000 | ❌ 见下 |
 
-**结论：9 MB/s 就是这台设备在当前内核下的实际上限。**
+**手机的 usb0 上 GSO / TSO / scatter-gather 全部是 `[fixed] off`**，这是 `u_ether`
+框架的硬限制，内核不允许改。所以 gadget 只能一个包一个包地发。
+
+### 巨型帧：这条路彻底堵死
+
+| 环节 | 支持 9000？ |
+|:---|:---|
+| 手机 gadget（NCM 端） | ✅ 支持到 15412 |
+| OpenWrt（Linux `cdc_ncm`） | ✅ 支持，但需手配 |
+| **Windows NCM 驱动** | ❌ **上限 1500，无 `JumboPacket` 属性** |
+| OpenWrt 桥 `br-lan` | ⚠️ MTU 取所有端口最小值 |
+
+Windows 上执行 `netsh interface ipv4 set subinterface "以太网 5" mtu=9000` 会报
+**「参数不正确」** —— 不是权限问题，驱动压根没有这个能力（`UsbNcm Host Device`
+10.0.26100.9818 的高级属性里没有 Jumbo Packet）。
+
+端到端任何一跳是 1500，整条路径就按 1500 走。只要经过 Windows，巨型帧永远无意义。
+
+> 💡 **OpenWrt 不需要为巨型帧做任何配置**，它只需要那个桥接热插拔脚本
+> （见 [刷机教程](TUTORIAL.md#八路由器桥接)），那跟 MTU 无关。
+
+### 结论
+
+**9 MB/s（77 Mbps）就是这台设备在当前内核下的实际天花板。**
+
+想再快只能让 MUSB 走 DMA（改控制器驱动），风险太大不值得 —— 这台设备没有串口兜底。
 
 ---
 
