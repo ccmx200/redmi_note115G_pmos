@@ -77,6 +77,8 @@ nmcli device wifi list
 
 开机自动连接：把 `/etc/evergo/wifi.conf.example` 复制成 `/etc/evergo/wifi.conf`，填好 `SSID=` / `PSK=` 即可。
 
+> 🔌 NetworkManager 只接管 `wlan0`（usb0/ap0/p2p0/wlan1 都标了 unmanaged），所以 nmtui 里建出来的连接一定绑在 wlan0 上；2.4G 和 5G（如 `cuicanmx_5G`）都能连。
+>
 > 🔌 Wi-Fi 需要先由 `evergo-wmt.service` 把 CONNSYS（WMT）拉起来：它执行的是 Android 上 `wmt_loader`/`wmt_launcher` 的那套 ioctl，并常驻应答 ROM patch 请求，之后 `/dev/wmtWifi` 才能给 WLAN 核上电、gen4m 才会 probe 出 `wlan0`。开机自动运行，`systemctl status evergo-wmt` 可以看状态；`evergo-wifi up` 也会在需要时把它拉起来。
 
 📖 **完整图文教程** → **[docs/TUTORIAL.md](docs/TUTORIAL.md)**
