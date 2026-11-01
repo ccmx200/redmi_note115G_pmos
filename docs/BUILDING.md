@@ -133,7 +133,7 @@ scripts/distro-common.sh    debian/ubuntu/fedora 的公共配置
 
 1. **换源** —— 清华镜像 + `Acquire::ForceIPv4`
 2. **全量升级** —— `apt upgrade` + `full-upgrade` / `dnf upgrade`
-3. **装必需包** —— `openssh-server`、`e2fsprogs`、`sudo`、`iproute2` 等
+3. **装必需包** —— `openssh-server`、`e2fsprogs`、`sudo`、`iproute2`、`wpa_supplicant` / `iw` / `dhcpcd`（Wi-Fi）等
 4. **设密码** —— `echo root:evergo | chpasswd`
 5. **设主机名** —— `evergo`
 6. **mask 掉会卡首启的服务** —— NetworkManager、cloud-init、ubuntu-advantage、apt-daily
@@ -146,11 +146,14 @@ scripts/distro-common.sh    debian/ubuntu/fedora 的公共配置
 | 文件 | 作用 |
 |:---|:---|
 | `/usr/local/bin/evergo-mode` | USB 网络模式切换 |
+| `/usr/local/bin/evergo-wifi` | Wi-Fi 站点模式管理（up / scan / connect / status / down） |
 | `/usr/local/bin/evergo-info` | 系统概览 |
 | `/usr/local/bin/evergo-first-login` | 首次登录向导 |
+| `/etc/evergo/wifi.conf.example` | 开机自动连 Wi-Fi 的配置模板（复制成 `wifi.conf` 才生效） |
 | `/etc/profile.d/00-evergo-welcome.sh` | 欢迎界面 + 触发向导 |
 | `/etc/systemd/network/10-usb0.network` | usb0 配置 |
 | `/etc/systemd/system/evergo-watchdog.service` | 喂狗（保持 fd 打开） |
+| `/etc/systemd/system/evergo-wifi.service` | 按 `/etc/evergo/wifi.conf` 自动连 Wi-Fi（文件不存在则不动作） |
 | `/etc/ssh/sshd_config.d/10-bringup.conf` | 只允许密码登录 |
 | `/etc/evergo/fastfetch.jsonc` | 欢迎界面配置 |
 
@@ -178,7 +181,7 @@ scripts/distro-common.sh    debian/ubuntu/fedora 的公共配置
 | `RAM_GIB` | `6` | 内存版本（4 / 6 / 8） |
 | `PANEL` | `k16a_36_02_0a_vdo,lcm` | 屏幕型号 |
 | `ROOTFS_MB` | `6144` | 根文件系统初始大小 |
-| `KERNEL_SRC` | *(空)* | 复用已有内核源码树 |
+| `KERNEL_SRC` | *(空)* | 复用已有内核源码树（旧版 build.sh 留下的 pre-WiFi 树会被检测出来并报错） |
 | `ARCH_TARBALL` | *(空)* | 复用 Arch ARM tarball |
 | `MIRROR_HOST` | `mirrors.ocf.berkeley.edu` | Arch 构建镜像站 |
 
@@ -190,12 +193,14 @@ scripts/distro-common.sh    debian/ubuntu/fedora 的公共配置
 
 ```
 ① 取内核源码
-   KERNEL_COMMIT=cb9ba2ee0f929ff8985f4821a0ee32fa1c06c5fd  ← 锁定版本
+   KERNEL_COMMIT=805764287e7b8d2e3f9f9c692e36be3de62046e3  ← 锁定版本
    git fetch --depth 1 origin $KERNEL_COMMIT && git checkout FETCH_HEAD
+   然后套用 config/patches/*.patch（目前一个：SOC 上跳过重复注册的 HIF-SDIO 驱动，
+   否则 WMT 初始化在 /dev/stpwmt 出现之前就 -EBUSY 退出）
 
 ② 应用配置
-   cp config/evergo.config  $L/out/.config
-   make olddefconfig
+   cp config/evergo.config  $L/out/.config   # 含 CONFIG_MTK_GEN4M_WIFI=y
+   make olddefconfig                        # 该符号必须存活，否则 build.sh 直接退出
 
 ③ 打设备树补丁（python 正则替换）
    • memory 节点 → RAM_GIB
@@ -203,12 +208,23 @@ scripts/distro-common.sh    debian/ubuntu/fedora 的公共配置
    • USB maximum-speed → high-speed
    • bootargs → 精简（loglevel=4 等）
 
-④ 编译
-   make Image dtbs
+④ 编译 DTB，然后内嵌固件
+   make dtbs
+   config/firmware/* + mt6833-xiaomi-evergo.dtb → out/work/fw
+   .config 写入 CONFIG_EXTRA_FIRMWARE="<12 个固件 + dtb>"
+            CONFIG_EXTRA_FIRMWARE_DIR="out/work/fw"
+
+⑤ 编译内核
+   make Image
 ```
 
 > ⚠️ **为什么要锁 commit？**
-> 上游 `main` 被作者重写过，能编译但**启动不了**。`cb9ba2ee` 是实测能跑的。详见 [踩坑](TROUBLESHOOTING.md#上游-main-编出来的内核能启动吗)。
+> `805764287e7b` 是 `master` 上实测能跑的版本（cb9ba2ee + 6 个 WMT/gen4m 提交），Wi-Fi 就靠它。锁 SHA 是为了构建可复现，上游以后即使再改写分支也不影响。
+
+> 📦 **固件为什么要内嵌？**
+> WMT 栈是编进内核的，开机时在 rootfs 出现之前就要加载 CONN/Wi-Fi 固件。`CONFIG_EXTRA_FIRMWARE` 把 12 个 blob 和设备树一起塞进 `Image`，`boot.img` 自带全部固件；rootfs 的 `/lib/firmware` 里也会装一份，因为用户态的 ROM patch launcher（wmt-init）需要读这些文件的头。
+
+> 🗑️ **`config/port` 已删除**：以前上游树缺 3 个 dt-bindings 头文件、DTS 里也没有 consys/wifi/btif 节点，所以 `build.sh` 会用 `config/port` 里 vendor 的旧 DTS 覆盖。现在 pinned 树是完整的（那 3 个头文件与树里完全一致），再覆盖旧 DTS 反而会删掉 Wi-Fi 节点，因此整套 vendored 覆盖逻辑已移除。
 
 ### 2. 根文件系统
 
@@ -301,9 +317,13 @@ avb.py --footer-template --vbmeta-template → boot.img (128 MB)
 | 位置 | 谁用 | 内容 |
 |:---|:---|:---|
 | boot.img 头 `dtb_addr` | **LK** | `config/dt_table_stock.bin`（联发科分区表） |
-| 内核 `EXTRA_FIRMWARE` | **内核** | 编译出的 `mt6833-xiaomi-evergo.dtb`（真实设备树） |
+| 内核 `EXTRA_FIRMWARE` | **内核** | 编译出的 `mt6833-xiaomi-evergo.dtb`（真实设备树）+ `config/firmware/` 里 12 个 WMT/gen4m 固件，全部内嵌进 `Image` |
+| `tools/wmt-init.c` | **rootfs** | 编译成静态 aarch64 的 `/usr/sbin/wmt-init`，由 `evergo-wmt.service` 在开机时执行：跑 wmt_loader/wmt_launcher 的 ioctl 序列并常驻应答 ROM patch 请求，之后 gen4m 才会 probe 出 `wlan0` |
+| `config/firmware/` | **rootfs** | 同一批固件也装到 `/lib/firmware`，给 wmt-init 读 ROM patch 头 |
 
 启动日志出现 `evergo: using embedded device tree` 就说明用的是第二份。
+
+> 📡 Wi-Fi 由 `CONFIG_MTK_GEN4M_WIFI=y` 编译进内核（gen4m 驱动 + WMT 栈 + `wmtWifi` 控制节点），设备树节点来自 pinned 树的 `mt6833.dtsi`（consys / wifi / btif）。旧的 `CONFIG_MTK_MT6833_CONN`（`drivers/soc/mediatek/mt6833-conn.c`）保持不设置。
 
 ### vendor DTB
 

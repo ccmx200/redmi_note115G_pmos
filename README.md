@@ -61,6 +61,17 @@ ssh root@169.254.42.1        # 密码 evergo
 
 **没有串口** —— 手机通过 USB RNDIS 网卡接入。插电脑零配置，插路由器可上网。
 
+Wi-Fi 也已可用（上游内核内置 MediaTek WMT/gen4m 驱动，固件直接嵌在 `boot.img` 里），和 USB 网络互不影响：
+
+```bash
+evergo-wifi scan
+evergo-wifi connect "Wi-Fi 名称" "密码"
+```
+
+开机自动连接：把 `/etc/evergo/wifi.conf.example` 复制成 `/etc/evergo/wifi.conf`，填好 `SSID=` / `PSK=` 即可。
+
+> 🔌 Wi-Fi 需要先由 `evergo-wmt.service` 把 CONNSYS（WMT）拉起来：它执行的是 Android 上 `wmt_loader`/`wmt_launcher` 的那套 ioctl，并常驻应答 ROM patch 请求，之后 `/dev/wmtWifi` 才能给 WLAN 核上电、gen4m 才会 probe 出 `wlan0`。开机自动运行，`systemctl status evergo-wmt` 可以看状态；`evergo-wifi up` 也会在需要时把它拉起来。
+
 📖 **完整图文教程** → **[docs/TUTORIAL.md](docs/TUTORIAL.md)**
 
 ---
@@ -72,11 +83,14 @@ ssh root@169.254.42.1        # 密码 evergo
 | 主控 MT6833 / 天玑 810（8 核） | ✅ |
 | 存储 128 GB eMMC → 自动扩到 106 GiB | ✅ |
 | 显示（`mediatekdrmfb` 帧缓冲控制台） | ✅ |
+| Wi-Fi（MT6631 / gen4m；WMT 驱动与固件内置内核，userspace 由 `/usr/sbin/wmt-init` 拉起） | ✅ |
 | CDC-NCM（426 Mbps 链路，实测 ~5.2 MB/s）（高速模式，~4.5 MB/s） | ✅ |
 | SSH 密码登录 | ✅ |
 | 硬件看门狗 | ✅ |
 
-**未完成**：PMIC、**CPU 调频（cpufreq）**、Wi-Fi / 蓝牙、基带、音频、相机、触摸固件、USB Host
+**未完成**：PMIC、**CPU 调频（cpufreq）**、蓝牙（内核已有 BTIF/btmtk 栈，镜像里还没装 bluez）、基带、音频、相机、触摸固件、USB Host
+
+> 📡 Wi-Fi 由新的内核 pin 提供：`master` 上的 `805764287e7b`（cb9ba2ee + 6 个 WMT/gen4m 提交，含 consys/wifi/btif 设备树节点）。它已经是完整的上游树，以前 `config/port` 里那套 DTS/头文件 vendored 补丁已删除。
 
 > 🐌 因为没有 cpufreq，CPU 频率固定，USB 网络只有 **3.6 MB/s**（USB 2.0 HS 理论 60 MB/s）。
 > 详见 [踩坑记录](docs/TROUBLESHOOTING.md#-性能类)。
@@ -99,6 +113,10 @@ ssh root@169.254.42.1        # 密码 evergo
 evergo-mode status     # 当前 USB 网络模式
 evergo-mode router     # DHCP 客户端（插路由器，默认）
 evergo-mode pc         # DHCP 服务端（直连电脑）
+evergo-wifi scan       # 扫描周围 Wi-Fi
+evergo-wifi connect "SSID" "密码"   # 连接 Wi-Fi 并获取地址
+evergo-wifi status     # Wi-Fi 链路 / 地址 / 关联状态
+evergo-wifi down       # 断开并关闭 Wi-Fi
 evergo-info            # 一屏系统概览
 ```
 

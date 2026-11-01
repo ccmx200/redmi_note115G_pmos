@@ -77,10 +77,13 @@ EOF
         apt-get update
         $APT upgrade
         $APT full-upgrade
+        # WiFi station mode (evergo-wifi) needs wpa_supplicant/iw/dhcpcd;
+        # dhcpcd-base is the daemon package name on the Debian family.
         $APT install --no-install-recommends \
             openssh-server e2fsprogs sudo curl wget ca-certificates \
             iproute2 iputils-ping net-tools less procps kmod tzdata \
-            nano vim-tiny htop rsync unzip file man-db
+            nano vim-tiny htop rsync unzip file man-db \
+            wpa_supplicant iw dhcpcd-base wireless-regdb
         $APT autoremove --purge
         apt-get clean
         rm -rf /var/lib/apt/lists/*
@@ -112,9 +115,12 @@ EOF
     chroot "$R" /usr/bin/qemu-aarch64-static /bin/sh -c '
         set -e
         dnf -y --refresh upgrade || true
+        # WiFi station mode (evergo-wifi) needs wpa_supplicant/iw/dhcpcd;
+        # wireless-regdb provides the signed regulatory.db for cfg80211.
         dnf -y install openssh-server e2fsprogs sudo curl wget ca-certificates \
             iproute iputils less procps-ng kmod tzdata nano vim-minimal \
-            htop rsync unzip file man-db || true
+            htop rsync unzip file man-db \
+            wpa_supplicant iw dhcpcd wireless-regdb || true
         dnf -y clean all
         echo root:evergo | chpasswd
         echo evergo > /etc/hostname

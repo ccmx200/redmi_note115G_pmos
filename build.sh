@@ -23,14 +23,15 @@
 # cross toolchain and ccache.
 set -euo pipefail
 
-KERNEL_REPO="${KERNEL_REPO:-https://github.com/ccmx200/linux-evergo.git}"
-# the author's repo has had its branches rewritten before (the old
-# bringup/evergo-mainline is gone, only main remains), so try a few and fail loudly
-KERNEL_BRANCH="${KERNEL_BRANCH:-main}"
-# The upstream tree has been rewritten and main no longer carries the port files;
-# this is the commit that was cross-built and booted on hardware.  Fetching it by
-# SHA works even though the branch it lived on is gone.
-KERNEL_COMMIT="${KERNEL_COMMIT:-cb9ba2ee0f929ff8985f4821a0ee32fa1c06c5fd}"
+KERNEL_REPO="${KERNEL_REPO:-https://github.com/KevinLmK0702/linux-evergo.git}"
+# master is the author's mainline port plus the MediaTek WMT connectivity stack
+# (drivers/misc/mediatek/connectivity: btif/common/wlan/bt, the consys/wifi/btif
+# device-tree nodes and the gen4m WLAN driver), i.e. it now has Wi-Fi.
+KERNEL_BRANCH="${KERNEL_BRANCH:-master}"
+# The tip of master that was cross-built and booted on hardware: cb9ba2ee plus six
+# commits adding the WMT/gen4m WiFi stack.  Pinning by SHA keeps builds
+# reproducible even if the branch is rewritten again later.
+KERNEL_COMMIT="${KERNEL_COMMIT:-805764287e7b8d2e3f9f9c692e36be3de62046e3}"
 KERNEL_SRC="${KERNEL_SRC:-}"             # reuse an existing checkout if set
 RAM_GIB="${RAM_GIB:-6}"                  # 4/6/8 GiB units exist
 PANEL="${PANEL:-k16a_36_02_0a_vdo,lcm}"  # Tianma; CSOT is k16a_42_02_0b_vdo,lcm
@@ -84,9 +85,9 @@ if [ -n "$KERNEL_SRC" ] && [ -d "$KERNEL_SRC" ]; then
 else
     L="$SRC/linux"
     if [ ! -d "$L/.git" ]; then
-        # fetch the pinned commit first: that is the tree that was booted on hardware.
-        # Upstream's branches have been rewritten, so a plain clone of main is not
-        # equivalent.
+        # fetch the pinned commit first: that is the tree that was booted on hardware
+        # and it carries the WiFi stack.  Cloning the branch would work today, but the
+        # SHA keeps the build reproducible if upstream is rewritten again.
         mkdir -p "$L"
         git -C "$L" init -q .
         git -C "$L" remote add origin "$KERNEL_REPO"
@@ -111,6 +112,20 @@ else
     fi
 fi
 
+# A tree produced by an older build.sh may still carry the old vendored pre-WiFi DTS
+# (the config/port copy is gone from this repository, but an out/src/linux from a
+# previous build was already overwritten).  That tree builds but has no WiFi, so
+# detect it instead of silently shipping a boot.img without WiFi.
+for node in 'consys@18002000' 'wifi@18000000' 'btif@1100c000'; do
+    if ! grep -q "$node" "$L/arch/arm64/boot/dts/mediatek/mt6833.dtsi" 2>/dev/null; then
+        echo "  !! $L/arch/arm64/boot/dts/mediatek/mt6833.dtsi has no $node node"
+        echo "     this looks like a stale pre-WiFi tree (old config/port copy):"
+        echo "     rm -rf $L  and build again, or point KERNEL_SRC at a fresh checkout"
+        exit 1
+    fi
+done
+echo "  device tree has the consys/wifi/btif nodes"
+
 # the tree may build in-tree or with O=out (a reused checkout often uses O=out).
 # When it uses O=out the config must live in the output dir, otherwise kbuild reports
 # "The source tree is not clean" and refuses to run.
@@ -132,8 +147,10 @@ say "apply config"
 #   CONFIG_USB_ETH / USB_ETH_RNDIS  (RNDIS gadget, no g_serial)
 #   CONFIG_F2FS_FS* / BLK_DEV_LOOP  (this rootfs)
 #   BACKLIGHT_LM36273 / DRM_PANEL_K16A_VDO (display)
+#   CONFIG_MTK_GEN4M_WIFI=y         (WMT + gen4m WiFi, built in)
+# CONFIG_EXTRA_FIRMWARE/_DIR are rewritten further down, once the DTB and the
+# WiFi blobs have been staged into one directory.
 cp "$HERE/config/evergo.config" "$KOUT/.config"
-sed -i "s|^CONFIG_EXTRA_FIRMWARE_DIR=.*|CONFIG_EXTRA_FIRMWARE_DIR=\"$L/arch/arm64/boot/dts/mediatek\"|" "$KOUT/.config"
 sed -i "s|^CONFIG_INITRAMFS_SOURCE=.*|CONFIG_INITRAMFS_SOURCE=\"$WORK/initramfs\"|" "$KOUT/.config"
 grep -q '^CONFIG_INITRAMFS_COMPRESSION_GZIP' "$KOUT/.config" || \
     echo 'CONFIG_INITRAMFS_COMPRESSION_GZIP=y' >> "$KOUT/.config"
@@ -188,29 +205,87 @@ print(f"  usb      -> high-speed")
 print(f"  bootargs -> loglevel=4, watchdog_thresh=30, no softlockup_panic")
 PY
 
-# Upstream main's port commit is incomplete: its mt6833.dtsi includes dt-bindings
-# headers the repository does not contain at all -
-#   dt-bindings/gce/mediatek,mt6833-gce.h
-#   dt-bindings/memory/mt6833-larb-port.h
-#   dt-bindings/reset/mediatek,mt6833-resets.h
-# so dtbs cannot succeed from that tree. The port files from the last complete tree
-# (cb9ba2ee, which was built and booted on hardware) are vendored under config/port
-# and installed over whatever upstream ships. They do not reference those headers.
-if [ -d "$HERE/config/port" ]; then
-    ( cd "$HERE/config/port" && find . -type f -print ) | sed 's|^\./||' | while read -r f; do
-        mkdir -p "$L/$(dirname "$f")"
-        cp -f "$HERE/config/port/$f" "$L/$f"
+# Nothing is vendored over the kernel tree any more.  The old config/port
+# workaround existed because the pre-WiFi upstream tree lacked three dt-bindings
+# headers and could not build its own DTS; the pinned tree is complete (those three
+# headers are byte-identical to the old vendored copies) and its DTS carries the
+# consys/wifi/btif nodes.  The vendored DTS files were the old pre-WiFi ones, so
+# copying them over this tree would delete exactly the nodes the WLAN driver needs.
+
+# Kernel fixups carried by this repository.  Pinning the upstream commit keeps the
+# build reproducible; these small patches are the delta needed on top of it.
+#
+#   0001-wmt-skip-hif-sdio-init-on-soc.patch
+#       The vendor connectivity init registers an SDIO client driver
+#       ("mtk_sdio_client") a second time on this SoC: sdio_detect_init() already
+#       did it at boot, so do_common_drv_init()'s HIF-SDIO init fails with -EBUSY
+#       and aborts the whole WMT bring-up before /dev/stpwmt exists.  The
+#       integrated CONNSYS uses the AXI (WiFi) and BTIF (BT) host interfaces, so
+#       the SDIO host is not needed on this board.
+if [ -d "$HERE/config/patches" ]; then
+    for p in "$HERE/config/patches/"*.patch; do
+        [ -e "$p" ] || continue
+        name="$(basename "$p")"
+        if patch -p1 -d "$L" --forward --silent < "$p"; then
+            echo "  applied $name"
+        elif patch -p1 -d "$L" --dry-run --reverse --silent < "$p" >/dev/null 2>&1; then
+            echo "  $name already applied"
+        else
+            echo "  !! could not apply $name"
+            exit 1
+        fi
     done
-    echo "  installed $(find "$HERE/config/port" -type f | wc -l) vendored port files"
 fi
 
 say "build dtb + kernel"
 cd "$L"
 make -s $KMAKE olddefconfig
+# The WiFi driver is a bool gated on CFG80211/ARCH_MEDIATEK/OF; make olddefconfig
+# silently drops it if any of those is not set, which would give a boot.img without
+# WiFi.  Fail loudly instead of shipping that.
+if ! grep -q '^CONFIG_MTK_GEN4M_WIFI=y' "$KOUT/.config"; then
+    echo "  !! CONFIG_MTK_GEN4M_WIFI=y did not survive olddefconfig"
+    echo "     (needs CFG80211=y, ARCH_MEDIATEK=y and OF=y)"
+    exit 1
+fi
+if grep -qE '^CONFIG_MTK_MT6833_CONN=[ym]' "$KOUT/.config"; then
+    echo "  !! CONFIG_MTK_MT6833_CONN got enabled; the old CONN driver must stay unset"
+    exit 1
+fi
+echo "  CONFIG_MTK_GEN4M_WIFI=y (old CONFIG_MTK_MT6833_CONN unset)"
 make -s $KMAKE -j"$(nproc)" dtbs
 DTB="$KOUT/arch/arm64/boot/dts/mediatek/mt6833-xiaomi-evergo.dtb"
 [ -f "$DTB" ] || { echo "dtb build failed"; exit 1; }
 ls -l "$DTB"
+
+# ------------------------------------------------------------ firmware ------
+# The WMT stack is built into the kernel and fetches these blobs before the rootfs
+# exists, so they are embedded in the Image together with the DTB through
+# CONFIG_EXTRA_FIRMWARE.  kbuild reads all of them from one directory, hence the
+# staging copy under work/.  Names are bare (no subdirectory): that is how the
+# vendor driver requests them from /lib/firmware on the stock firmware.
+say "stage WiFi firmware + dtb for embedding"
+FW="$WORK/fw"
+FW_FILES="WIFI_RAM_CODE_soc2_2_1a_1.bin WIFI_RAM_CODE_soc2_2_1_1.bin \
+soc2_2_ram_mcu_1a_1_hdr.bin soc2_2_ram_mcu_1_1_hdr.bin \
+soc2_2_ram_wifi_1a_1_hdr.bin soc2_2_ram_wifi_1_1_hdr.bin \
+soc2_2_ram_bt_1a_1_hdr.bin soc2_2_ram_bt_1_1_hdr.bin \
+WMT_SOC.cfg BT_FW.cfg wifi.cfg txpowerctrl.cfg"
+rm -rf "$FW"; mkdir -p "$FW"
+for f in $FW_FILES; do
+    [ -f "$HERE/config/firmware/$f" ] || { echo "  !! missing config/firmware/$f"; exit 1; }
+    cp -f "$HERE/config/firmware/$f" "$FW/$f"
+done
+cp -f "$DTB" "$FW/mt6833-xiaomi-evergo.dtb"
+FW_NAMES="$FW_FILES mt6833-xiaomi-evergo.dtb"
+sed -i "s|^CONFIG_EXTRA_FIRMWARE=.*|CONFIG_EXTRA_FIRMWARE=\"$FW_NAMES\"|" "$KOUT/.config"
+grep -q '^CONFIG_EXTRA_FIRMWARE=' "$KOUT/.config" || \
+    echo "CONFIG_EXTRA_FIRMWARE=\"$FW_NAMES\"" >> "$KOUT/.config"
+sed -i "s|^CONFIG_EXTRA_FIRMWARE_DIR=.*|CONFIG_EXTRA_FIRMWARE_DIR=\"$FW\"|" "$KOUT/.config"
+grep -q '^CONFIG_EXTRA_FIRMWARE_DIR=' "$KOUT/.config" || \
+    echo "CONFIG_EXTRA_FIRMWARE_DIR=\"$FW\"" >> "$KOUT/.config"
+echo "  $(ls "$FW" | wc -l) files embedded from $FW:"
+ls -l "$FW" | awk 'NR>1{printf "    %-36s %s bytes\n", $9, $5}'
 
 # -------------------------------------------------------------- rootfs ------
 say "rootfs: $DISTRO"
@@ -236,8 +311,23 @@ echo "  handled by scripts/distro-$DISTRO.sh"
 
 say "rootfs: apply the evergo overlay"
 tar xzf "$HERE/rootfs-overlay.tar.gz" -C "$R" --numeric-owner
-chmod 755 "$R/usr/local/bin/evergo-mode" "$R/usr/local/bin/evergo-info" "$R/usr/local/bin/evergo-first-login" 2>/dev/null || true
+chmod 755 "$R/usr/local/bin/evergo-mode" "$R/usr/local/bin/evergo-info" "$R/usr/local/bin/evergo-first-login" "$R/usr/local/bin/evergo-wifi" 2>/dev/null || true
 chmod 644 "$R/etc/profile.d/00-evergo-welcome.sh" "$R/etc/evergo/fastfetch.jsonc" 2>/dev/null || true
+
+# ------------------------------------------------- WiFi userspace + CONN -----
+# The CONN subsystem needs the vendor's wmt_loader/wmt_launcher ioctl sequence
+# before the WLAN core can be powered on; evergo-wmt.service runs it through
+# /usr/sbin/wmt-init (a static aarch64 binary, so it works on every distro).  The
+# ROM-patch launcher reads the soc2_2_ram_*_hdr.bin headers from /lib/firmware, so
+# the same blobs that are embedded in the Image are also installed into the rootfs.
+say "rootfs: WiFi firmware + WMT bring-up helper"
+mkdir -p "$R/lib/firmware" "$R/usr/sbin"
+cp -f "$HERE/config/firmware/"* "$R/lib/firmware/"
+chmod 644 "$R/lib/firmware/"* "$R/lib/firmware/README.md" 2>/dev/null || true
+"${CROSS_COMPILE}gcc" -static -Os -fno-stack-protector \
+    -o "$WORK/wmt-init" "$HERE/tools/wmt-init.c" || { echo "  !! wmt-init build failed"; exit 1; }
+install -m 0755 "$WORK/wmt-init" "$R/usr/sbin/wmt-init"
+echo "  /usr/sbin/wmt-init $(stat -c%s "$R/usr/sbin/wmt-init") bytes, $(ls "$R/lib/firmware" | wc -l) firmware files"
 rm -f "$R/etc/hosts" 2>/dev/null || true
 mkdir -p "$R/etc/systemd/system/multi-user.target.wants" \
          "$R/etc/systemd/system/sysinit.target.wants" \

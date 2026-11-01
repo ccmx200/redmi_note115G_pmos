@@ -1,0 +1,24 @@
+diff --git a/drivers/misc/mediatek/connectivity/common/common_detect/drv_init/common_drv_init.c b/drivers/misc/mediatek/connectivity/common/common_detect/drv_init/common_drv_init.c
+index e6c64529e..302844f0b 100644
+--- a/drivers/misc/mediatek/connectivity/common/common_detect/drv_init/common_drv_init.c
++++ b/drivers/misc/mediatek/connectivity/common/common_detect/drv_init/common_drv_init.c
+@@ -32,7 +32,18 @@ int do_common_drv_init(int chip_id)
+ 	wmt_detect_set_chip_type(chip_id);
+ 
+ 	/* HIF-SDIO driver init */
+-	i_ret_tmp = mtk_wcn_hif_sdio_drv_init();
++	/*
++	 * Only the external SDIO combo chips need the HIF-SDIO driver.  On the
++	 * integrated (SOC) CONNSYS the HIF is AXI (WiFi) and BTIF (BT), and the SDIO
++	 * client driver is already registered by sdio_detect_init() with the same
++	 * driver name ("mtk_sdio_client"), so a second sdio_register_driver() fails
++	 * with -EBUSY and used to abort the whole connectivity init before the WMT
++	 * core was even created.
++	 */
++	if (wmt_detect_get_chip_type() != WMT_CHIP_TYPE_SOC)
++		i_ret_tmp = mtk_wcn_hif_sdio_drv_init();
++	else
++		i_ret_tmp = 0;
+ 	i_ret += i_ret_tmp;
+ 	WMT_DETECT_PR_DBG("HIF-SDIO driver init, i_ret:%d\n", i_ret);
+ 

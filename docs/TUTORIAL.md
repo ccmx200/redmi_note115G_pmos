@@ -279,7 +279,7 @@ evergo-first-login --force
                                       root@evergo
                    -`                -----------
                   .o+`               OS       Debian GNU/Linux 13
-                 `ooo/               Kernel   7.3.0-rc4-gcb9ba2ee0f92
+                 `ooo/               Kernel   7.3.0-rc4-g805764287e7b
                 `+oooo:              Uptime   5 hours, 6 mins
                `+oooooo:             Packages 203 (dpkg)
                -+oooooo+:            Shell    bash

@@ -508,26 +508,23 @@ At least one invalid signature was encountered.
 
 ### 上游 `main` 编出来的内核能启动吗？
 
-**不能。** 实测：
+**现在能。** 当前锁定的是 `master` 上的 `805764287e7b`（`cb9ba2ee` + 6 个 WMT/gen4m 提交），实测能启动，Wi-Fi 可用。
 
-| 内核来源 | 内核大小 | 结果 |
-|:---|---:|:---|
-| 上游 `main`（9c62af69） | 19,092,832 B | ❌ 循环重启 |
-| `cb9ba2ee`（锁定版） | 19,098,824 B | ✅ 正常 |
-
-作者重写过 `main`，能编译但**启动不了**。所以 `build.sh` 锁定 `KERNEL_COMMIT=cb9ba2ee0f929ff8985f4821a0ee32fa1c06c5fd`（上游还能按 SHA fetch 到）。
+历史上作者重写过 `main`：早期 `main`（9c62af69）能编译但循环重启，所以 `build.sh` 一直按 SHA 锁定而不是跟分支。这条经验保留：**不要改成跟分支构建**。
 
 ---
 
-### 上游 `main` 是残缺的
+### 上游旧树是残缺的（`config/port` 已不需要）
 
-移植提交缺 3 个头文件，还引用了不存在的头：
+早期的上游树缺 3 个 dt-bindings 头文件，还引用了不存在的头：
 
 - 缺 `dt-bindings/pinctrl/mediatek,mt6833-pinfunc.h`
 - 缺 `dt-bindings/power/mediatek,mt6833-power.h`
 - 引用不存在的 `gce/mediatek,mt6833-gce.h`、`memory/mt6833-larb-port.h`、`reset/mediatek,mt6833-resets.h`
 
-**解法**：6 个文件 vendor 到 `config/port/`，构建前覆盖。
+**当时的解法**：6 个文件 vendor 到 `config/port/`，构建前覆盖。
+
+**现在**：pinned 树 `805764287e7b` 是完整的，那 3 个头文件与树里完全一致，所以 `config/port` 已整个删除。注意其中 3 个 DTS 是 **pre-WiFi** 旧版本，再覆盖回去会删掉 consys/wifi/btif 节点，不要恢复这套逻辑。
 
 ---
 

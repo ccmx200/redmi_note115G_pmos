@@ -77,10 +77,12 @@ pacman-key --populate archlinuxarm >/dev/null 2>&1
 # Full upgrade, not just a sync: the tarball is a monthly snapshot, so -Sy alone
 # would keep shipping packages that are weeks out of date.
 pacman -Syu --noconfirm >/dev/null
+# WiFi station mode (evergo-wifi) needs wpa_supplicant/iw/dhcpcd; wireless-regdb
+# provides the signed regulatory.db cfg80211 asks for at startup.
 pacman -S --noconfirm --needed \
   btop htop fastfetch git wget curl nano vim tmux rsync unzip zip file less \
   man-db which pacman-contrib net-tools bind-tools iputils traceroute mtr whois \
-  lm_sensors lsof strace sudo >/dev/null
+  lm_sensors lsof strace sudo wpa_supplicant iw dhcpcd wireless-regdb >/dev/null
 # The tarball ships a locked root password and the image only allows password logins,
 # so a freshly flashed phone would be unreachable.
 echo "root:evergo" | chpasswd
