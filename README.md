@@ -100,7 +100,7 @@ nmcli device wifi list
 
 **未完成**：PMIC、**CPU 调频（cpufreq）**、基带、音频、相机、触摸固件、USB Host
 
-> 📡 Wi-Fi/蓝牙由新的内核 pin 提供：`bringup/evergo-mainline` 的 `a602c03b24`（作者 b350 实测树）——cb9ba2ee + WMT/gen4m WiFi 栈 + BTIF 蓝牙 + `evergo_defconfig`（含早期看门狗接管等运行期增强）。
+> 📡 Wi-Fi/蓝牙由新的内核 pin 提供：`bringup/evergo-mainline` 的 `5bba5452`（作者 b350 实测树 + 两个蓝牙修复提交）——cb9ba2ee + WMT/gen4m WiFi 栈 + BTIF 蓝牙 + `evergo_defconfig`（含早期看门狗接管等运行期增强）。
 > 本仓库在该树上只加一个内核补丁（`config/patches/0001`：SOC 上跳过重复的 HIF-SDIO 注册，否则 WMT 初始化会 -EBUSY 退出）。以前 `config/port` 里那套 DTS/头文件 vendored 补丁已删除。
 > 蓝牙与 WiFi 共用 CONNSYS 的上电/ROM patch 流程：`evergo-wmt.service` 拉起 CONNSYS 后，`hciconfig hci0 up` 已经能通过 WMT 给 BT 核上电（HCI 5.1 正常）。但 BT 核没有出厂地址（nvdata 里的 `BT_Addr` 主线读不到），控制器处于 unconfigured 状态，BlueZ 还看不到它——这是蓝牙下一步要解决的问题。
 

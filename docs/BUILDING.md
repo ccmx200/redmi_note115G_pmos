@@ -198,7 +198,7 @@ scripts/distro-common.sh    debian/ubuntu/fedora 的公共配置
 
 ```
 ① 取内核源码
-   KERNEL_COMMIT=a602c03b24886426ab512f4102eb0a5ba8c54162  ← 锁定版本（bringup/evergo-mainline tip）
+   KERNEL_COMMIT=5bba54524ae56cc211f823a7bf586271e5cb2eb5  ← 锁定版本（bringup/evergo-mainline tip，含蓝牙修复）
    git fetch --depth 1 origin $KERNEL_COMMIT && git checkout FETCH_HEAD
    然后套用 config/patches/*.patch（目前一个：SOC 上跳过重复注册的 HIF-SDIO 驱动，
    否则 WMT 初始化在 /dev/stpwmt 出现之前就 -EBUSY 退出）

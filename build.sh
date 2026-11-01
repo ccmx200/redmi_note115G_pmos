@@ -29,10 +29,12 @@ KERNEL_REPO="${KERNEL_REPO:-https://github.com/KevinLmK0702/linux-evergo.git}"
 # transport and the early-watchdog/forced-DT support.  The default branch (master)
 # has the same code but not the watchdog/console bring-up changes.
 KERNEL_BRANCH="${KERNEL_BRANCH:-bringup/evergo-mainline}"
-# Pinned commit: cb9ba2ee plus the WMT/gen4m/BTIF commits and the evergo_defconfig
-# (the configuration that produced the author's working b350 image, Bluetooth
-# included).  Pinning by SHA keeps builds reproducible if the branch is rewritten.
-KERNEL_COMMIT="${KERNEL_COMMIT:-a602c03b24886426ab512f4102eb0a5ba8c54162}"
+# Pinned commit: cb9ba2ee plus the WMT/gen4m/BTIF commits, the evergo_defconfig and
+# the two Bluetooth follow-ups (btmtkuart powers the CONN-managed core through WMT;
+# btmtk_stp takes the per-unit BD address from
+# /lib/firmware/mediatek/mt6833/BT_Addr).  Pinning by SHA keeps builds reproducible
+# if the branch is rewritten.
+KERNEL_COMMIT="${KERNEL_COMMIT:-5bba54524ae56cc211f823a7bf586271e5cb2eb5}"
 KERNEL_SRC="${KERNEL_SRC:-}"             # reuse an existing checkout if set
 RAM_GIB="${RAM_GIB:-6}"                  # 4/6/8 GiB units exist
 PANEL="${PANEL:-k16a_36_02_0a_vdo,lcm}"  # Tianma; CSOT is k16a_42_02_0b_vdo,lcm
