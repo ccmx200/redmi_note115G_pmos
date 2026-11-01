@@ -114,3 +114,36 @@ systemd-run --unit=desktop-install --collect --no-block \
 ```
 
 彻底避免的办法是**离线把桌面装进镜像**（在 PC 的 chroot 里装好再刷），不在手机上跑 apt。
+
+## 2026-11-01：memtester 实测结果（内存压力下数据错乱）
+
+装桌面反复 panic 后，直接在系统里跑 `memtester`（先连 WiFi `apt install memtester`）：
+
+| 测试 | 结果 |
+|:---|:---|
+| `memtester 4G 1` | **几百万个数据不匹配**；集中在 256–512 MiB、768–1024 MiB、1280–1536 MiB、1536–1792 MiB 等连续区间，读回值像内核数据/随机值 |
+| `memtester 3G 1`（同一系统、驱动全开） | 基本干净（只有 1 处不匹配） |
+
+结论：
+
+* 不是 WiFi / display / initramfs 的软件 bug。**用到的内存越多越容易踩到坏区**，
+  这正好对应“平时能用、一装桌面/高负载就 panic”。
+* panic 形态（`pc : 0x0` 软中断、`__refill_objects_node` 里 NULL、Bad page map）都是
+  内存数据错乱的后果，不是彼此独立的 bug。
+
+规避手段：
+
+1. 镜像自带 `evergo-swapfile.service`（RAM < 7 GiB 时首次启动建 3 GiB swap），降低内存压力。
+2. 本机实测 **bootargs 加 `mem=4G`** 限制可用内存后稳定性明显改善（可用 ~3.7 GiB）；
+   这是一个取舍，是否默认开启见 `build.sh` 的 `BOOTARGS`。
+3. 装桌面用 CI 的 desktop 镜像 / 离线 chroot 装好再刷，不要在手机上跑
+   `apt install ubuntu-desktop`（那是最容易触发 panic 的场景）。
+4. 想彻底确认硬件：刷回官方系统在同样负载下跑内存测试；官方系统也报错就是硬件问题
+   （保修/换板）。
+
+### 与 `构建` 相关的一个 bug（已修）
+
+boot job 之前用默认 `DISTRO=arch` 跑了一遍完整 rootfs，导致每次“内核构建”日志里都在编
+Arch。现在 `KERNEL_ONLY=1` 会在 `rootfs` 段之前直接跳过所有发行版 rootfs，日志会出现
+`kernel-only build: distribution rootfs + userdata skipped`；CI run 50 的 `boot / 6 GiB`
+和 `boot / 8 GiB` 已验证不再编任何发行版。
