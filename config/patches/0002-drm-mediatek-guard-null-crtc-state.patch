@@ -1,0 +1,48 @@
+diff --git a/drivers/gpu/drm/mediatek/mtk_crtc.c b/drivers/gpu/drm/mediatek/mtk_crtc.c
+index b8987013a..46465f7c1 100644
+--- a/drivers/gpu/drm/mediatek/mtk_crtc.c
++++ b/drivers/gpu/drm/mediatek/mtk_crtc.c
+@@ -563,7 +563,7 @@ static void evergo_kick_worker(struct work_struct *work)
+ 	struct mtk_crtc *mtk_crtc = evergo_kick_crtc;
+ 	int j;
+ 
+-	if (!mtk_crtc || !mtk_crtc->enabled)
++	if (!mtk_crtc || !mtk_crtc->enabled || !mtk_crtc->base.state)
+ 		return;
+ 
+ 	/*
+@@ -603,11 +603,20 @@ static void mtk_crtc_ddp_config(struct drm_crtc *crtc,
+ 				struct cmdq_pkt *cmdq_handle)
+ {
+ 	struct mtk_crtc *mtk_crtc = to_mtk_crtc(crtc);
+-	struct mtk_crtc_state *state = to_mtk_crtc_state(mtk_crtc->base.state);
++	struct mtk_crtc_state *state;
+ 	struct mtk_ddp_comp *comp = mtk_crtc->ddp_comp[0];
+ 	unsigned int i;
+ 	unsigned int local_layer;
+ 
++	/* No state has been installed yet (first atomic commit pending, or the
++	 * crtc was torn down): there is nothing to program, and touching
++	 * state->pending_* would fault on a NULL pointer.  This is reachable
++	 * from mtk_crtc_ddp_irq() and the evergo periodic kick worker.
++	 */
++	if (!crtc->state)
++		return;
++	state = to_mtk_crtc_state(mtk_crtc->base.state);
++
+ 	/*
+ 	 * TODO: instead of updating the registers here, we should prepare
+ 	 * working registers in atomic_commit and let the hardware command
+@@ -827,6 +836,12 @@ static void mtk_crtc_ddp_irq(void *data)
+ 	struct mtk_crtc *mtk_crtc = to_mtk_crtc(crtc);
+ 	struct mtk_drm_private *priv = crtc->dev->dev_private;
+ 
++	/* Spurious/leftover interrupts arrive before the first commit enables
++	 * the pipeline; mtk_crtc_ddp_config() has no state to program yet.
++	 */
++	if (!mtk_crtc->enabled || !crtc->state)
++		return;
++
+ #if IS_REACHABLE(CONFIG_MTK_CMDQ)
+ 	struct drm_device *dev = mtk_crtc->base.dev;
+ 	if (!priv->data->shadow_register && !mtk_crtc->cmdq_client.chan)

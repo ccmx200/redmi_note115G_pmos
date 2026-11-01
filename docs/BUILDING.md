@@ -352,6 +352,12 @@ avb.py --footer-template --vbmeta-template → boot.img (128 MB)
 
 ## kernel 与设备树
 
+> `config/patches/0002-drm-mediatek-guard-null-crtc-state.patch`：
+> OVL/DSI IRQ 和 evergo 周期性 kick worker 可能在第一次 atomic commit 之前或 CRTC 拆除之后
+> 调 `mtk_crtc_ddp_config()`，此时 `crtc->state == NULL`，`state->pending_config` 读 NULL+0x158
+> 直接 panic（trace 里 `pc : mtk_crtc_ddp_config+0x3c`）。补丁加了 `crtc->state`/`enabled` 检查。
+
+
 ### 两份 DTB
 
 | 位置 | 谁用 | 内容 |
