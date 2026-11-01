@@ -43,9 +43,38 @@ Fork 仓库 → **Actions** → 「build evergo images」→ **Run workflow**
 | `panel` | `k16a_36_02_0a_vdo,lcm`（天马）/ `k16a_42_02_0b_vdo,lcm`（华星） | 屏幕型号 |
 | `rootfs_mb` | 默认 `6144` | 根文件系统初始大小 |
 
-**矩阵** = `distro × ram_gib`，最多 8 个并行 job，约 35 分钟。
+**内核只按内存变体编译，不再每个发行版编译一次**：
 
-产物自动发布到 Releases，命名 `<distro>-<ram>gib`。
+```
+plan ──┬─ boot / 6 GiB   （编译内核 + initramfs + arch rootfs → boot-6gib.img）
+       └─ boot / 8 GiB   （同上，DTB/Image 与 6 GiB 不同，所以必须分开编）
+
+       └─ distro / {debian,ubuntu,fedora} × {6,8} GiB
+            下载对应 boot-<ram>gib.img，只构建自己的 rootfs + userdata
+            （build.sh 加 BOOT_IMG=... 直接复用预编译 boot.img，完全不编译内核）
+```
+
+- 内核编译次数：从「8 次」降到「2 次」；distro job 只跑 rootfs（每个约 5–8 分钟）。
+- 内核 Image 与发行版无关：initramfs（busybox + e2fsprogs）是自包含的，arch job 产出的 boot.img 在 debian/ubuntu/fedora 上同样可用。
+- 产物自动发布到 Releases，命名 `boot-<distro>-<ram>gib.img` / `userdata-<distro>-<ram>gib.simg`。
+
+### 清理老 release
+
+Actions → 「cleanup old releases」→ **Run workflow**：
+
+| 参数 | 说明 |
+|:---|:---|
+| `keep_last` | 保留最近几个 build（默认 5） |
+| `dry_run` | 默认 `true`，只打印要删什么；确认后改 `false` 真删 |
+| `delete_tags` | 连 git tag 一起删（默认 true） |
+
+只删 tag 形如 `build-<数字>` 的自动构建，手工 release 不动。
+本地也可以用脚本（需要带 repo 写权限的 token）：
+
+```bash
+GITHUB_TOKEN=ghp_xxx ./scripts/cleanup-releases.py --keep 5 --dry-run
+GITHUB_TOKEN=ghp_xxx ./scripts/cleanup-releases.py --keep 5 --yes
+```
 
 ---
 
@@ -92,6 +121,9 @@ KERNEL_SRC=/root/linux-evergo ./build.sh
 
 # 复用 Arch tarball
 ARCH_TARBALL=/path/ArchLinuxARM-aarch64-latest.tar.gz ./build.sh
+
+# 只构建 rootfs，复用已经编好的 boot.img（CI 的 distro job 就是这么干的）
+BOOT_IMG=out-boot/boot-6gib.img DISTRO=debian RAM_GIB=6 ./build.sh
 ```
 
 ---
@@ -187,6 +219,7 @@ scripts/distro-common.sh    debian/ubuntu/fedora 的公共配置
 | `PANEL` | `k16a_36_02_0a_vdo,lcm` | 屏幕型号 |
 | `ROOTFS_MB` | `6144` | 根文件系统初始大小 |
 | `KERNEL_SRC` | *(空)* | 复用已有内核源码树（旧版 build.sh 留下的 pre-WiFi 树会被检测出来并报错） |
+| `BOOT_IMG` | *(空)* | 复用预编译的 boot.img：跳过内核/initramfs 编译，只构建 rootfs + userdata（CI distro job 用） |
 | `ARCH_TARBALL` | *(空)* | 复用 Arch ARM tarball |
 | `MIRROR_HOST` | `mirrors.ocf.berkeley.edu` | Arch 构建镜像站 |
 

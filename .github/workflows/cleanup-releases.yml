@@ -1,0 +1,77 @@
+name: cleanup old releases
+
+# Deletes old evergo release builds (and optionally their tags) to keep the
+# releases page and the repository small.  Run it from the Actions tab:
+#   Actions -> cleanup old releases -> Run workflow
+#
+#   keep_last    how many of the most recent builds to keep (default 5)
+#   dry_run      true = only print what would be deleted (default true)
+#   delete_tags  also delete the git tag of a deleted release (default true)
+#
+# It only ever deletes releases whose tag matches "build-<number>", so a manual
+# release you created by hand is never touched.
+
+on:
+  workflow_dispatch:
+    inputs:
+      keep_last:
+        description: 'how many recent builds to keep'
+        default: '5'
+        required: true
+      dry_run:
+        description: 'only print what would be deleted'
+        type: choice
+        options: ['true', 'false']
+        default: 'true'
+        required: true
+      delete_tags:
+        description: 'delete the git tag with the release'
+        type: choice
+        options: ['true', 'false']
+        default: 'true'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: delete old release builds
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const keep = Math.max(parseInt('${{ github.event.inputs.keep_last }}', 10) || 5, 0)
+            const dryRun = '${{ github.event.inputs.dry_run }}' === 'true'
+            const deleteTags = '${{ github.event.inputs.delete_tags }}' === 'true'
+            const owner = context.repo.owner
+            const repo = context.repo.repo
+
+            const releases = await github.paginate(github.rest.repos.listReleases, {
+              owner, repo, per_page: 100,
+            })
+            const builds = releases
+              .filter(r => /^build-\d+$/.test(r.tag_name))
+              .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+
+            core.info(`${builds.length} build releases found, keeping the newest ${keep}`)
+            const doomed = builds.slice(keep)
+            if (doomed.length === 0) {
+              core.info('nothing to delete')
+              return
+            }
+
+            for (const r of doomed) {
+              core.info(`${dryRun ? '[dry-run] ' : ''}deleting release ${r.tag_name} (${r.name || ''}, ${r.assets.length} assets, created ${r.created_at})`)
+              if (dryRun) continue
+              await github.rest.repos.deleteRelease({ owner, repo, release_id: r.id })
+              if (deleteTags) {
+                try {
+                  await github.rest.git.deleteRef({ owner, repo, ref: `tags/${r.tag_name}` })
+                } catch (e) {
+                  core.warning(`tag ${r.tag_name} could not be deleted: ${e.message}`)
+                }
+              }
+            }
+            core.info(`done: ${dryRun ? 'would have deleted' : 'deleted'} ${doomed.length} release(s)`)

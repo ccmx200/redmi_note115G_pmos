@@ -43,6 +43,10 @@ ROOTFS_MB="${ROOTFS_MB:-6144}"           # 6 GiB f2fs
 # scripts/distro-$DISTRO.sh, which populates a plain directory; the image creation,
 # initramfs and boot.img packing below are shared by all of them.
 DISTRO="${DISTRO:-arch}"                         # arch | debian | ubuntu | fedora
+# CI builds the kernel once per RAM variant (job "boot") and lets the other distro
+# jobs reuse that boot.img; set BOOT_IMG to a prebuilt boot image to skip the whole
+# kernel/initramfs half of this script and only build the rootfs + userdata images.
+BOOT_IMG="${BOOT_IMG:-}"
 ARCH_TARBALL="${ARCH_TARBALL:-}"         # reuse a downloaded Arch ARM rootfs tarball
 # mirror used to fetch packages during the build.  The Chinese mirrors are unreachable
 # from GitHub's runners, so the default is OCF (Berkeley), which serves the whole tree
@@ -82,6 +86,10 @@ fi
 say() { printf '\n\033[1;36m== %s\033[0m\n' "$*"; }
 
 # --------------------------------------------------------------- kernel -----
+if [ -n "$BOOT_IMG" ]; then
+    [ -f "$BOOT_IMG" ] || { echo "  !! BOOT_IMG=$BOOT_IMG does not exist"; exit 1; }
+    say "boot image: reusing $BOOT_IMG (kernel build skipped)"
+else
 say "kernel source"
 if [ -n "$KERNEL_SRC" ] && [ -d "$KERNEL_SRC" ]; then
     L="$KERNEL_SRC"; echo "  reusing $L"
@@ -298,6 +306,7 @@ grep -q '^CONFIG_EXTRA_FIRMWARE_DIR=' "$KOUT/.config" || \
     echo "CONFIG_EXTRA_FIRMWARE_DIR=\"$FW\"" >> "$KOUT/.config"
 echo "  $(ls "$FW" | wc -l) files embedded from $FW:"
 ls -l "$FW" | awk 'NR>1{printf "    %-36s %s bytes\n", $9, $5}'
+fi  # BOOT_IMG unset
 
 # -------------------------------------------------------------- rootfs ------
 say "rootfs: $DISTRO"
@@ -454,6 +463,11 @@ img2simg "$ROOTIMG" "$OUT/userdata.simg" 2>/dev/null && echo "  sparse image ok"
 ls -l "$OUT"/userdata.* | awk '{printf "  %-24s %s bytes\n", $9, $5}'
 
 # ------------------------------------------------------------- initramfs ----
+if [ -n "$BOOT_IMG" ]; then
+    say "boot.img: copying the prebuilt image"
+    cp -f "$BOOT_IMG" "$OUT/boot.img"
+    ls -l "$OUT/boot.img"
+else
 say "initramfs (mount userdata, switch_root)"
 IR="$WORK/initramfs"
 rm -rf "$IR"; mkdir -p "$IR"/{bin,dev,proc,sys,tmp,run,newroot,usr/lib}
@@ -705,6 +719,8 @@ python3 "$HERE/scripts/avb.py" --image "$WORK/boot-nofooter.img" \
     --footer-template "$HERE/config/avb_footer.bin" \
     --vbmeta-template "$HERE/config/avb_vbmeta.bin" \
     --output "$OUT/boot.img"
+
+fi  # BOOT_IMG unset
 
 say "artifacts"
 ls -l "$OUT"/*.img "$OUT"/*.img.gz "$OUT"/*.simg 2>/dev/null | awk '{printf "  %-28s %s bytes\n", $9, $5}'
