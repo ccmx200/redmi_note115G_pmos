@@ -43,19 +43,20 @@ Fork 仓库 → **Actions** → 「build evergo images」→ **Run workflow**
 | `panel` | `k16a_36_02_0a_vdo,lcm`（天马）/ `k16a_42_02_0b_vdo,lcm`（华星） | 屏幕型号 |
 | `rootfs_mb` | 默认 `6144` | 根文件系统初始大小 |
 
-**内核只按内存变体编译，不再每个发行版编译一次**：
+**内核只按内存变体编译，不再每个发行版编译一次，而且 boot job 不再构建任何发行版 rootfs**：
 
 ```
 plan ──┬─ boot / 6 GiB   （编译内核 + initramfs + arch rootfs → boot-6gib.img）
        └─ boot / 8 GiB   （同上，DTB/Image 与 6 GiB 不同，所以必须分开编）
 
-       └─ distro / {debian,ubuntu,fedora} × {6,8} GiB
+       └─ distro / {arch,debian,ubuntu,fedora} × {6,8} GiB
             下载对应 boot-<ram>gib.img，只构建自己的 rootfs + userdata
             （build.sh 加 BOOT_IMG=... 直接复用预编译 boot.img，完全不编译内核）
 ```
 
-- 内核编译次数：从「8 次」降到「2 次」；distro job 只跑 rootfs（每个约 5–8 分钟）。
-- 内核 Image 与发行版无关：initramfs（busybox + e2fsprogs）是自包含的，arch job 产出的 boot.img 在 debian/ubuntu/fedora 上同样可用。
+- 内核编译次数：从「8 次」降到「2 次」；distro job 只跑 rootfs（每个约 5–8 分钟，arch 也是普通 distro job，不再在 boot job 里构建）。
+- boot job 用 `KERNEL_ONLY=1` + `INITRAMFS_ROOTFS=<Alpine minirootfs>`：initramfs 只需要 busybox（静态下载）和 e2fsck/resize2fs（Alpine 的 e2fsprogs 包），不需要任何发行版 rootfs。
+- 内核 Image 与发行版无关：initramfs（busybox + e2fsprogs）是自包含的，所以同一个 boot.img 在 arch/debian/ubuntu/fedora 上都能用。
 - 产物自动发布到 Releases，命名 `boot-<distro>-<ram>gib.img` / `userdata-<distro>-<ram>gib.simg`。
 
 ### 清理老 release

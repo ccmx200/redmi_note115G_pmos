@@ -4,11 +4,13 @@ name: build evergo images
 #   boot-<distro>-<ram>gib.img          kernel + initramfs that mounts userdata
 #   userdata-<distro>-<ram>gib.simg     the distribution itself, grown on first boot
 #
-# The kernel is compiled ONCE per RAM variant (job "boot"), not once per distro:
-# the kernel Image is identical for every distribution, and the initramfs that gets
-# embedded is self-contained (busybox + e2fsprogs), so the arch job's boot.img works
-# unchanged for debian/ubuntu/fedora.  The distro jobs therefore skip the kernel
-# entirely (BOOT_IMG=...) and only build their root filesystem.
+# The kernel is compiled ONCE per RAM variant (job "boot"), not once per distro.
+# That job does NOT build any distribution rootfs: the initramfs only needs a
+# busybox (downloaded as a static aarch64 binary) and e2fsck/resize2fs for the
+# first-boot grow, so it uses a 4 MB Alpine minirootfs plus the e2fsprogs package
+# instead of spending minutes in a full Arch/Debian tree.  The distro jobs then
+# reuse the boot.img artifact (BOOT_IMG=...) and only build their root filesystem,
+# arch included.
 #
 # RAM variants are not interchangeable: the DTB (and therefore the Image) differs
 # between the 6 GiB and 8 GiB units, hence one boot build per RAM size.
@@ -58,7 +60,6 @@ jobs:
     outputs:
       boots: ${{ steps.plan.outputs.boots }}
       rootfs: ${{ steps.plan.outputs.rootfs }}
-      distros: ${{ steps.plan.outputs.distros }}
     steps:
       - id: plan
         run: |
@@ -67,7 +68,7 @@ jobs:
           [ "$distro" = "all" ] && distros="arch debian ubuntu fedora" || distros="$distro"
           [ "$ram"    = "all" ] && rams="6 8"                              || rams="$ram"
 
-          # boot images: one per RAM variant, whatever distributions were asked for
+          # boot images: one kernel build per RAM variant, no distribution rootfs
           boots=""
           for r in $rams; do
             [ -n "$boots" ] && boots="$boots,"
@@ -75,23 +76,19 @@ jobs:
           done
           echo "boots={\"include\":[$boots]}" >> "$GITHUB_OUTPUT"
 
-          # rootfs jobs: everything except arch (the arch rootfs is already produced
-          # by the boot job, which has to build one to generate the initramfs)
+          # rootfs jobs: every requested distribution, each reusing the boot image
           rootfs=""
           for d in $distros; do
-            [ "$d" = "arch" ] && continue
             for r in $rams; do
               [ -n "$rootfs" ] && rootfs="$rootfs,"
               rootfs="$rootfs{\"distro\":\"$d\",\"ram\":\"$r\"}"
             done
           done
           echo "rootfs={\"include\":[$rootfs]}" >> "$GITHUB_OUTPUT"
-          echo "distros=$distros" >> "$GITHUB_OUTPUT"
           echo "boot builds: $boots"
           echo "rootfs builds: $rootfs"
 
-  # One kernel build per RAM variant.  DISTRO=arch also gives us the arch userdata
-  # image, so this job publishes arch as well when arch was requested.
+  # One kernel build per RAM variant; produces boot-<ram>gib.img only, no distro rootfs.
   boot:
     needs: plan
     runs-on: ubuntu-24.04
@@ -119,7 +116,6 @@ jobs:
             debootstrap \
             e2fsprogs qemu-user-static android-sdk-libsparse-utils
           aarch64-linux-gnu-gcc --version | head -1
-          mke2fs -V 2>&1 | head -1
           qemu-aarch64-static --version | head -1
 
       - name: restore ccache
@@ -131,19 +127,35 @@ jobs:
             evergo-ccache-${{ hashFiles('build.sh', 'config/evergo.config') }}-
             evergo-ccache-
 
-      - name: build kernel + arch rootfs (boot.img)
+      - name: prepare initramfs bootstrap rootfs (Alpine + e2fsprogs)
+        run: |
+          set -e
+          base="https://mirrors.tuna.tsinghua.edu.cn/alpine/latest-stable/releases/aarch64"
+          name=$(curl -fsSL "$base/" | grep -oE 'alpine-minirootfs-[0-9.]+-aarch64\.tar\.gz' | head -1)
+          echo "using $name"
+          curl -fsSL -o /tmp/alpine.tgz "$base/$name"
+          mkdir -p rootfs-alpine
+          sudo tar xzf /tmp/alpine.tgz -C rootfs-alpine
+          sudo cp /usr/bin/qemu-aarch64-static rootfs-alpine/usr/bin/
+          echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/latest-stable/main" | sudo tee rootfs-alpine/etc/apk/repositories
+          sudo cp /etc/resolv.conf rootfs-alpine/etc/resolv.conf
+          sudo chroot rootfs-alpine /usr/bin/qemu-aarch64-static /bin/sh -c 'apk add --no-cache e2fsprogs'
+          sudo ls -l rootfs-alpine/sbin/e2fsck rootfs-alpine/sbin/resize2fs
+
+      - name: build kernel (no distribution rootfs)
         run: |
           chmod +x build.sh scripts/*.sh
           sudo -E env "PATH=$PATH" "HOME=$HOME" "CCACHE_DIR=$CCACHE_DIR" \
-            "DISTRO=arch" \
+            "KERNEL_ONLY=1" \
+            "INITRAMFS_ROOTFS=$PWD/rootfs-alpine" \
             "RAM_GIB=${{ matrix.ram }}" \
-            "PANEL=$PANEL" "ROOTFS_MB=$ROOTFS_MB" ./build.sh
+            "PANEL=$PANEL" ./build.sh
 
       - name: ccache stats
         if: always()
         run: ccache -s || sudo ccache -s || true
 
-      - name: stage boot image for the distro jobs
+      - name: stage boot image
         run: |
           set -e
           r="${{ matrix.ram }}"
@@ -158,48 +170,9 @@ jobs:
           path: boot/boot-*.img
           retention-days: 14
 
-      - name: rename arch artifacts
-        if: contains(needs.plan.outputs.distros, 'arch')
-        run: |
-          set -e
-          r="${{ matrix.ram }}"
-          mkdir -p dist
-          cp out/boot.img    "dist/boot-arch-${r}gib.img"
-          cp out/userdata.simg "dist/userdata-arch-${r}gib.simg"
-          SZ=$(stat -c%s "dist/userdata-arch-${r}gib.simg")
-          LIMIT=2147483648
-          if [ "$SZ" -gt "$LIMIT" ]; then
-              echo "::error::userdata-arch-${r}gib.simg is $SZ bytes, over GitHub's 2 GiB asset limit"
-              exit 1
-          fi
-          (cd dist && sha256sum * > "SHA256SUM-arch-${r}gib.txt")
-          ls -l dist/
-
-      - name: upload arch artifacts
-        if: contains(needs.plan.outputs.distros, 'arch')
-        uses: actions/upload-artifact@v4
-        with:
-          name: evergo-arch-${{ matrix.ram }}gib
-          path: dist/*
-          retention-days: 14
-
-      - name: publish arch release assets
-        if: contains(needs.plan.outputs.distros, 'arch') && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main')
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: build-${{ github.run_number }}
-          name: evergo build ${{ github.run_number }}
-          body_path: .github/release-notes.md
-          files: dist/*
-          fail_on_unmatched_files: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  # One rootfs per distribution; the kernel comes from the boot job, so these jobs
-  # are short (no kernel compile at all).
+  # One rootfs per distribution (arch included); the kernel comes from the boot job.
   distro:
     needs: [plan, boot]
-    if: needs.plan.outputs.rootfs != '{"include":[]}'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     strategy:

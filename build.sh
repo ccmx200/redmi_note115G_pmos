@@ -47,6 +47,12 @@ DISTRO="${DISTRO:-arch}"                         # arch | debian | ubuntu | fedo
 # jobs reuse that boot.img; set BOOT_IMG to a prebuilt boot image to skip the whole
 # kernel/initramfs half of this script and only build the rootfs + userdata images.
 BOOT_IMG="${BOOT_IMG:-}"
+# CI builds the boot image once per RAM variant in a job that does not want to build
+# any distribution rootfs at all: KERNEL_ONLY=1 skips the rootfs/userdata half, and
+# INITRAMFS_ROOTFS points at a tiny rootfs (Alpine minirootfs + e2fsprogs) that provides
+# the e2fsck/resize2fs binaries the initramfs needs for the first-boot grow.
+KERNEL_ONLY="${KERNEL_ONLY:-0}"
+INITRAMFS_ROOTFS="${INITRAMFS_ROOTFS:-}"
 ARCH_TARBALL="${ARCH_TARBALL:-}"         # reuse a downloaded Arch ARM rootfs tarball
 # mirror used to fetch packages during the build.  The Chinese mirrors are unreachable
 # from GitHub's runners, so the default is OCF (Berkeley), which serves the whole tree
@@ -309,6 +315,11 @@ ls -l "$FW" | awk 'NR>1{printf "    %-36s %s bytes\n", $9, $5}'
 fi  # BOOT_IMG unset
 
 # -------------------------------------------------------------- rootfs ------
+if [ "$KERNEL_ONLY" = 1 ]; then
+    [ -d "$INITRAMFS_ROOTFS" ] || {
+        echo "  !! KERNEL_ONLY=1 needs INITRAMFS_ROOTFS=<dir with e2fsprogs>"; exit 1; }
+    say "kernel-only build: distribution rootfs + userdata skipped"
+else
 say "rootfs: $DISTRO"
 
 # The rootfs is assembled as a plain directory by a per-distro script; the image is only
@@ -462,6 +473,8 @@ gzip -9 -c "$ROOTIMG" > "$OUT/userdata.img.gz"
 img2simg "$ROOTIMG" "$OUT/userdata.simg" 2>/dev/null && echo "  sparse image ok"
 ls -l "$OUT"/userdata.* | awk '{printf "  %-24s %s bytes\n", $9, $5}'
 
+fi  # KERNEL_ONLY
+
 # ------------------------------------------------------------- initramfs ----
 if [ -n "$BOOT_IMG" ]; then
     say "boot.img: copying the prebuilt image"
@@ -508,12 +521,19 @@ if [ "$(id -u)" = 0 ]; then
 fi
 # The first boot grows the filesystem to the whole eMMC user area, which needs e2fsck
 # and resize2fs inside the initramfs together with their library closure.
-for tool in /usr/sbin/e2fsck /usr/sbin/resize2fs; do
-    if [ -x "$R$tool" ]; then
-        python3 "$HERE/scripts/collect-libs.py" "$R" "$tool" "$IR" | sed 's/^/  /'
-    else
-        echo "  !! $tool missing from the rootfs, first-boot growth disabled"
+IR_SRC="${INITRAMFS_ROOTFS:-$R}"
+for tool in /usr/sbin/e2fsck /sbin/e2fsck /usr/sbin/resize2fs /sbin/resize2fs; do
+    if [ -x "$IR_SRC$tool" ]; then
+        python3 "$HERE/scripts/collect-libs.py" "$IR_SRC" "$tool" "$IR" | sed 's/^/  /'
     fi
+done
+# the init script below looks for the tools in /usr/sbin
+for t in e2fsck resize2fs; do
+    if [ -x "$IR/sbin/$t" ] && [ ! -e "$IR/usr/sbin/$t" ]; then
+        mkdir -p "$IR/usr/sbin"
+        ln -sfn "/sbin/$t" "$IR/usr/sbin/$t"
+    fi
+    [ -x "$IR/usr/sbin/$t" ] || echo "  !! $t missing from the initramfs, first-boot growth disabled"
 done
 
 # CDC-NCM gadget helper: the kernel no longer builds the legacy g_ether gadget, so the

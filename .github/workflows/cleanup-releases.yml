@@ -1,11 +1,11 @@
 name: cleanup old releases
 
-# Deletes old evergo release builds (and optionally their tags) to keep the
-# releases page and the repository small.  Run it from the Actions tab:
+# Deletes old evergo release builds (and their tags) to keep the releases page and
+# the repository small.  Run it from the Actions tab:
 #   Actions -> cleanup old releases -> Run workflow
 #
 #   keep_last    how many of the most recent builds to keep (default 5)
-#   dry_run      true = only print what would be deleted (default true)
+#   dry_run      false = really delete (default), true = only print what would go
 #   delete_tags  also delete the git tag of a deleted release (default true)
 #
 # It only ever deletes releases whose tag matches "build-<number>", so a manual
@@ -21,8 +21,8 @@ on:
       dry_run:
         description: 'only print what would be deleted'
         type: choice
-        options: ['true', 'false']
-        default: 'true'
+        options: ['false', 'true']
+        default: 'false'
         required: true
       delete_tags:
         description: 'delete the git tag with the release'
