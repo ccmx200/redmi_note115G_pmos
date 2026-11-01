@@ -764,7 +764,7 @@ python3 "$HERE/scripts/avb.py" --image "$WORK/boot-nofooter.img" \
 fi  # BOOT_IMG unset
 
 say "artifacts"
-ls -l "$OUT"/*.img "$OUT"/*.img.gz "$OUT"/*.simg 2>/dev/null | awk '{printf "  %-28s %s bytes\n", $9, $5}'
+ls -l "$OUT"/*.img "$OUT"/*.img.gz "$OUT"/*.simg 2>/dev/null | awk '{printf "  %-28s %s bytes\n", $9, $5}' || true
 cat > "$OUT/SHA256SUMS" <<'EOF'
 EOF
 ( cd "$OUT" && sha256sum boot.img userdata.img.gz userdata.simg 2>/dev/null >> SHA256SUMS || true )
