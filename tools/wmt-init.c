@@ -267,10 +267,22 @@ static void launcher_loop(int fd)
 	}
 }
 
-/* 1. CONN hardware init, 2. WMT core init.  Returns 0 on success. */
+/* 1. CONN hardware init, 2. WMT core init.  Returns 0 on success.
+ *
+ * Note: do_connectivity_driver_init() returns -1 even when the WMT core came up
+ * correctly, because the Bluetooth and GPS sub-inits have no implementation in
+ * this tree and their failures are accumulated.  What matters here is whether
+ * /dev/stpwmt exists afterwards, so that is what decides success.
+ */
 static int conn_module_init(void)
 {
 	int fd, chip, ret = 0;
+	int module_init_ret = -1;
+
+	if (access("/dev/stpwmt", F_OK) == 0) {
+		msg("WMT core already up (/dev/stpwmt exists)\n");
+		return 0;
+	}
 
 	fd = open("/dev/wmtdetect", O_RDWR | O_CLOEXEC);
 	if (fd < 0) {
@@ -297,12 +309,20 @@ static int conn_module_init(void)
 		msg("SET_CHIP_ID: %s\n", strerror(errno));
 
 	/* WMT core: creates /dev/stpwmt and starts the wmt daemon threads */
-	if (ioctl(fd, COMBO_IOCTL_DO_MODULE_INIT, chip) < 0) {
-		msg("DO_MODULE_INIT: %s\n", strerror(errno));
-		ret = -1;
-	}
+	module_init_ret = ioctl(fd, COMBO_IOCTL_DO_MODULE_INIT, chip);
+	if (module_init_ret < 0)
+		msg("DO_MODULE_INIT: %s (BT/GPS sub-inits fail on this board)\n",
+		    strerror(errno));
 out:
 	close(fd);
+
+	/* the WMT core is up iff the device node appeared */
+	if (access("/dev/stpwmt", F_OK) != 0) {
+		msg("WMT core did not come up: %s\n", strerror(errno));
+		return -1;
+	}
+	if (module_init_ret < 0)
+		msg("WMT core is up despite the ioctl error\n");
 	return ret;
 }
 

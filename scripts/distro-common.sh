@@ -83,7 +83,8 @@ EOF
             openssh-server e2fsprogs sudo curl wget ca-certificates \
             iproute2 iputils-ping net-tools less procps kmod tzdata \
             nano vim-tiny htop rsync unzip file man-db \
-            wpa_supplicant iw dhcpcd-base wireless-regdb
+            wpa_supplicant iw dhcpcd-base wireless-regdb \
+            network-manager
         $APT autoremove --purge
         apt-get clean
         rm -rf /var/lib/apt/lists/*
@@ -120,7 +121,8 @@ EOF
         dnf -y install openssh-server e2fsprogs sudo curl wget ca-certificates \
             iproute iputils less procps-ng kmod tzdata nano vim-minimal \
             htop rsync unzip file man-db \
-            wpa_supplicant iw dhcpcd wireless-regdb || true
+            wpa_supplicant iw dhcpcd wireless-regdb \
+            NetworkManager NetworkManager-tui || true
         dnf -y clean all
         echo root:evergo | chpasswd
         echo evergo > /etc/hostname

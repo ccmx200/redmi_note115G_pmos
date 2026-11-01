@@ -68,6 +68,13 @@ evergo-wifi scan
 evergo-wifi connect "Wi-Fi 名称" "密码"
 ```
 
+也可以用 **NetworkManager 的 TUI** 配网（镜像里带 `nmtui`）：
+
+```bash
+nmtui                 # 《激活连接》里选 Wi-Fi，输入密码即可
+nmcli device wifi list
+```
+
 开机自动连接：把 `/etc/evergo/wifi.conf.example` 复制成 `/etc/evergo/wifi.conf`，填好 `SSID=` / `PSK=` 即可。
 
 > 🔌 Wi-Fi 需要先由 `evergo-wmt.service` 把 CONNSYS（WMT）拉起来：它执行的是 Android 上 `wmt_loader`/`wmt_launcher` 的那套 ioctl，并常驻应答 ROM patch 请求，之后 `/dev/wmtWifi` 才能给 WLAN 核上电、gen4m 才会 probe 出 `wlan0`。开机自动运行，`systemctl status evergo-wmt` 可以看状态；`evergo-wifi up` 也会在需要时把它拉起来。
@@ -83,7 +90,7 @@ evergo-wifi connect "Wi-Fi 名称" "密码"
 | 主控 MT6833 / 天玑 810（8 核） | ✅ |
 | 存储 128 GB eMMC → 自动扩到 106 GiB | ✅ |
 | 显示（`mediatekdrmfb` 帧缓冲控制台） | ✅ |
-| Wi-Fi（MT6631 / gen4m；WMT 驱动与固件内置内核，userspace 由 `/usr/sbin/wmt-init` 拉起） | ✅ |
+| Wi-Fi（MT6631 / gen4m；WMT 驱动与固件内置内核，`/usr/sbin/wmt-init` 拉起；带 `NetworkManager` + `nmtui`） | ✅ |
 | CDC-NCM（426 Mbps 链路，实测 ~5.2 MB/s）（高速模式，~4.5 MB/s） | ✅ |
 | SSH 密码登录 | ✅ |
 | 硬件看门狗 | ✅ |

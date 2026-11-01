@@ -320,6 +320,7 @@ avb.py --footer-template --vbmeta-template → boot.img (128 MB)
 | 内核 `EXTRA_FIRMWARE` | **内核** | 编译出的 `mt6833-xiaomi-evergo.dtb`（真实设备树）+ `config/firmware/` 里 12 个 WMT/gen4m 固件，全部内嵌进 `Image` |
 | `tools/wmt-init.c` | **rootfs** | 编译成静态 aarch64 的 `/usr/sbin/wmt-init`，由 `evergo-wmt.service` 在开机时执行：跑 wmt_loader/wmt_launcher 的 ioctl 序列并常驻应答 ROM patch 请求，之后 gen4m 才会 probe 出 `wlan0` |
 | `config/firmware/` | **rootfs** | 同一批固件也装到 `/lib/firmware`，给 wmt-init 读 ROM patch 头 |
+| `NetworkManager` + `nmtui` | **rootfs** | 各发行版脚本安装；`/etc/NetworkManager/conf.d/10-evergo-usb0.conf` 把 usb0 标为 unmanaged，usb0 仍由 systemd-networkd 管，wlan0 交给 NetworkManager（`nmtui`/`nmcli`） |
 
 启动日志出现 `evergo: using embedded device tree` 就说明用的是第二份。
 

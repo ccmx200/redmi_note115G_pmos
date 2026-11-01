@@ -356,7 +356,7 @@ fedora)
 esac
 
 # enable the services we ship
-for u in sshd systemd-networkd systemd-resolved evergo-firstboot; do
+for u in sshd systemd-networkd systemd-resolved evergo-firstboot NetworkManager; do
     if [ -e "$R/usr/lib/systemd/system/$u.service" ] || [ -e "$R/lib/systemd/system/$u.service" ]; then
         ln -sf "/usr/lib/systemd/system/$u.service" \
             "$R/etc/systemd/system/multi-user.target.wants/$u.service" 2>/dev/null || \
@@ -383,7 +383,6 @@ say "rootfs: distro post-processing"
 for u in ubuntu-advantage.service ua-reboot-cmds.service ua-timer.timer \
          apport.service whoopsie.service snapd.service snapd.socket \
          unattended-upgrades.service apt-daily.service apt-daily-upgrade.service \
-         NetworkManager.service NetworkManager-wait-online.service \
          cloud-init.service cloud-init-local.service cloud-config.service cloud-final.service \
          systemd-networkd-wait-online.service; do
     if [ -e "$R/usr/lib/systemd/system/$u" ] || [ -e "$R/lib/systemd/system/$u" ] ||
@@ -393,8 +392,8 @@ for u in ubuntu-advantage.service ua-reboot-cmds.service ua-timer.timer \
     fi
 done
 
-# systemd-networkd owns usb0.  Fedora enables NetworkManager by default, and two network
-# managers fighting over the interface means no address at all.
+# usb0 is owned by systemd-networkd; NetworkManager runs too (for wlan0 and nmtui),
+# but its config drop-in marks usb0 unmanaged, so the two do not fight over it.
 if [ -e "$R/usr/lib/systemd/system/systemd-networkd.service" ] ||
    [ -e "$R/lib/systemd/system/systemd-networkd.service" ]; then
     mkdir -p "$R/etc/systemd/system/multi-user.target.wants"
