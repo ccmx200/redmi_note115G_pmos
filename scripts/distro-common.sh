@@ -35,6 +35,31 @@ QEMU=/usr/bin/qemu-aarch64-static
 cp -f "$QEMU" "$R/usr/bin/qemu-aarch64-static"
 chmod 755 "$R/usr/bin/qemu-aarch64-static"
 
+# The maintainer scripts of systemd (and several others) need /proc and /sys: without
+# them the systemd postinst dies with
+#   Cannot open '/etc/machine-id' in neither writable nor read-only mode
+# and dpkg leaves the whole transaction unconfigured.  Bind-mount the pseudo
+# filesystems into the chroot for the whole package-install phase.
+EVERGO_MOUNTS=""
+for m in dev proc sys; do
+    mkdir -p "$R/$m"
+    if mount --bind "/$m" "$R/$m" 2>/dev/null; then
+        EVERGO_MOUNTS="$R/$m $EVERGO_MOUNTS"
+    fi
+done
+cleanup_mounts() {
+    for m in $EVERGO_MOUNTS; do umount "$m" 2>/dev/null || umount -l "$m" 2>/dev/null || true; done
+}
+trap cleanup_mounts EXIT
+
+# chroot 里没有 init：让服务安装脚本直接跳过启动，而不是报错
+mkdir -p "$R/usr/sbin"
+printf '#!/bin/sh\nexit 101\n' > "$R/usr/sbin/policy-rc.d"
+chmod 755 "$R/usr/sbin/policy-rc.d"
+# 给 systemd 一个合法的 machine-id，postinst 就不会去生成（qemu-user 下那一步会 ENOSYS）
+printf '0123456789abcdef0123456789abcdef\n' > "$R/etc/machine-id"
+chmod 444 "$R/etc/machine-id"
+
 # DNS 在 qemu-user chroot 里不可靠，pin 镜像 IP
 for h in mirrors.tuna.tsinghua.edu.cn; do
     ip=$(getent ahostsv4 "$h" 2>/dev/null | awk 'NR==1{print $1}')
@@ -68,6 +93,14 @@ EOF
     mkdir -p "$R/etc/apt/apt.conf.d"
     echo 'Acquire::ForceIPv4 "true";' > "$R/etc/apt/apt.conf.d/99force-ipv4"
     echo 'Acquire::Check-Valid-Until "false";' > "$R/etc/apt/apt.conf.d/99no-check-valid"
+    # The official rootfs tarball has no usable CA bundle and the build runs under
+    # qemu-user, so apt's HTTPS peer check fails for every mirror ("certificate verify
+    # failed") and no package index can be fetched.  Package metadata is still GPG
+    # signed, so disable only the TLS peer/host verification for the build chroot.
+    cat > "$R/etc/apt/apt.conf.d/99evergo-tls" <<'AC'
+Acquire::https::Verify-Peer "false";
+Acquire::https::Verify-Host "false";
+AC
 
     log "apt update + upgrade + install"
     chroot "$R" /usr/bin/qemu-aarch64-static /bin/sh -c '
@@ -83,8 +116,8 @@ EOF
             openssh-server e2fsprogs sudo curl wget ca-certificates \
             iproute2 iputils-ping net-tools less procps kmod tzdata \
             nano vim-tiny htop rsync unzip file man-db \
-            wpa_supplicant iw dhcpcd-base wireless-regdb \
-            network-manager
+            wpasupplicant iw dhcpcd-base wireless-regdb \
+            network-manager bluez rfkill
         $APT autoremove --purge
         apt-get clean
         rm -rf /var/lib/apt/lists/*
@@ -103,6 +136,7 @@ name=Fedora - Tsinghua mirror
 baseurl=$TUNA_FEDORA/releases/\$releasever/Everything/aarch64/os/
 enabled=1
 gpgcheck=0
+sslverify=0
 countme=0
 
 [updates]
@@ -110,6 +144,7 @@ name=Fedora Updates - Tsinghua mirror
 baseurl=$TUNA_FEDORA/updates/\$releasever/Everything/aarch64/
 enabled=1
 gpgcheck=0
+sslverify=0
 countme=0
 EOF
     log "dnf upgrade + install"
@@ -122,7 +157,7 @@ EOF
             iproute iputils less procps-ng kmod tzdata nano vim-minimal \
             htop rsync unzip file man-db \
             wpa_supplicant iw dhcpcd wireless-regdb \
-            NetworkManager NetworkManager-tui || true
+            NetworkManager NetworkManager-tui bluez rfkill || true
         dnf -y clean all
         echo root:evergo | chpasswd
         echo evergo > /etc/hostname
@@ -140,7 +175,9 @@ rm -f "$R/usr/bin/qemu-aarch64-static"
 
 # systemd-networkd 要接管 usb0；NetworkManager 会抢，mask 掉
 mkdir -p "$R/etc/systemd/system"
-for u in NetworkManager.service NetworkManager-wait-online.service \
+# NetworkManager is wanted on these images (nmtui/nmcli); usb0 is marked unmanaged in
+# /etc/NetworkManager/conf.d/10-evergo-usb0.conf so it cannot take the SSH link away.
+for u in \
          systemd-networkd-wait-online.service cloud-init.service \
          cloud-init-local.service cloud-config.service cloud-final.service \
          ubuntu-advantage.service ua-reboot-cmds.service ua-timer.timer \
@@ -153,7 +190,12 @@ done
 # hosts / hostname / machine-id
 printf '127.0.0.1   localhost\n::1         localhost\n127.0.1.1   evergo\n' > "$R/etc/hosts"
 printf 'evergo\n' > "$R/etc/hostname"
-[ -e "$R/etc/machine-id" ] && : > "$R/etc/machine-id"
+# The install-time machine-id was only there to satisfy systemd's postinst.  Leave it
+# empty so the device generates its own on first boot, and drop the install-time
+# policy-rc.d (it would block service starts if it ever survived into the image).
+: > "$R/etc/machine-id"
+chmod 644 "$R/etc/machine-id"
+rm -f "$R/usr/sbin/policy-rc.d"
 
 # 验证
 FAIL=0

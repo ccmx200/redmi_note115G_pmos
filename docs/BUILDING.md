@@ -193,7 +193,7 @@ scripts/distro-common.sh    debian/ubuntu/fedora 的公共配置
 
 ```
 ① 取内核源码
-   KERNEL_COMMIT=805764287e7b8d2e3f9f9c692e36be3de62046e3  ← 锁定版本
+   KERNEL_COMMIT=a602c03b24886426ab512f4102eb0a5ba8c54162  ← 锁定版本（bringup/evergo-mainline tip）
    git fetch --depth 1 origin $KERNEL_COMMIT && git checkout FETCH_HEAD
    然后套用 config/patches/*.patch（目前一个：SOC 上跳过重复注册的 HIF-SDIO 驱动，
    否则 WMT 初始化在 /dev/stpwmt 出现之前就 -EBUSY 退出）
@@ -320,11 +320,13 @@ avb.py --footer-template --vbmeta-template → boot.img (128 MB)
 | 内核 `EXTRA_FIRMWARE` | **内核** | 编译出的 `mt6833-xiaomi-evergo.dtb`（真实设备树）+ `config/firmware/` 里 12 个 WMT/gen4m 固件，全部内嵌进 `Image` |
 | `tools/wmt-init.c` | **rootfs** | 编译成静态 aarch64 的 `/usr/sbin/wmt-init`，由 `evergo-wmt.service` 在开机时执行：跑 wmt_loader/wmt_launcher 的 ioctl 序列并常驻应答 ROM patch 请求，之后 gen4m 才会 probe 出 `wlan0` |
 | `config/firmware/` | **rootfs** | 同一批固件也装到 `/lib/firmware`，给 wmt-init 读 ROM patch 头 |
+| `bluez` | **rootfs** | 各发行版脚本安装，`bluetooth.service` 开机启用（BT 核在 CONNSYS 里，走 BTIF/btmtkuart） |
 | `NetworkManager` + `nmtui` | **rootfs** | 各发行版脚本安装；`/etc/NetworkManager/conf.d/10-evergo-usb0.conf` 把 usb0 标为 unmanaged，usb0 仍由 systemd-networkd 管，wlan0 交给 NetworkManager（`nmtui`/`nmcli`） |
 
 启动日志出现 `evergo: using embedded device tree` 就说明用的是第二份。
 
 > 📡 Wi-Fi 由 `CONFIG_MTK_GEN4M_WIFI=y` 编译进内核（gen4m 驱动 + WMT 栈 + `wmtWifi` 控制节点），设备树节点来自 pinned 树的 `mt6833.dtsi`（consys / wifi / btif）。旧的 `CONFIG_MTK_MT6833_CONN`（`drivers/soc/mediatek/mt6833-conn.c`）保持不设置。
+> 🔵 蓝牙走同一 CONNSYS：`CONFIG_BT_MTK_BTIF=y`（BTIF serdev 控制器）+ `CONFIG_BT_MTKUART=y`（HCI 传输），`CONFIG_BT_HCIUART=y` 是前者的依赖；`CONFIG_MT6833_EVERGO_WDT=y` 来自作者 defconfig（早期看门狗接管）。build.sh 在 `olddefconfig` 后会检查这几个符号是否还在，掉了就报错退出。
 
 ### vendor DTB
 

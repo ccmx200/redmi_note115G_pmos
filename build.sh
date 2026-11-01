@@ -24,14 +24,15 @@
 set -euo pipefail
 
 KERNEL_REPO="${KERNEL_REPO:-https://github.com/KevinLmK0702/linux-evergo.git}"
-# master is the author's mainline port plus the MediaTek WMT connectivity stack
-# (drivers/misc/mediatek/connectivity: btif/common/wlan/bt, the consys/wifi/btif
-# device-tree nodes and the gen4m WLAN driver), i.e. it now has Wi-Fi.
-KERNEL_BRANCH="${KERNEL_BRANCH:-master}"
-# The tip of master that was cross-built and booted on hardware: cb9ba2ee plus six
-# commits adding the WMT/gen4m WiFi stack.  Pinning by SHA keeps builds
-# reproducible even if the branch is rewritten again later.
-KERNEL_COMMIT="${KERNEL_COMMIT:-805764287e7b8d2e3f9f9c692e36be3de62046e3}"
+# bringup/evergo-mainline is the branch the author boots on hardware; its tip adds
+# the evergo_defconfig on top of the WMT/gen4m WiFi stack, the BTIF-serdev Bluetooth
+# transport and the early-watchdog/forced-DT support.  The default branch (master)
+# has the same code but not the watchdog/console bring-up changes.
+KERNEL_BRANCH="${KERNEL_BRANCH:-bringup/evergo-mainline}"
+# Pinned commit: cb9ba2ee plus the WMT/gen4m/BTIF commits and the evergo_defconfig
+# (the configuration that produced the author's working b350 image, Bluetooth
+# included).  Pinning by SHA keeps builds reproducible if the branch is rewritten.
+KERNEL_COMMIT="${KERNEL_COMMIT:-a602c03b24886426ab512f4102eb0a5ba8c54162}"
 KERNEL_SRC="${KERNEL_SRC:-}"             # reuse an existing checkout if set
 RAM_GIB="${RAM_GIB:-6}"                  # 4/6/8 GiB units exist
 PANEL="${PANEL:-k16a_36_02_0a_vdo,lcm}"  # Tianma; CSOT is k16a_42_02_0b_vdo,lcm
@@ -252,7 +253,16 @@ if grep -qE '^CONFIG_MTK_MT6833_CONN=[ym]' "$KOUT/.config"; then
     echo "  !! CONFIG_MTK_MT6833_CONN got enabled; the old CONN driver must stay unset"
     exit 1
 fi
-echo "  CONFIG_MTK_GEN4M_WIFI=y (old CONFIG_MTK_MT6833_CONN unset)"
+# Bluetooth rides on the same CONNSYS block: the BTIF controller and btmtkuart have
+# to be built in, otherwise the BT core stays in ROM (the toolchain used to drop
+# these symbols silently).
+for sym in CONFIG_BT_MTK_BTIF CONFIG_BT_MTKUART CONFIG_MT6833_EVERGO_WDT; do
+    if ! grep -q "^$sym=y" "$KOUT/.config"; then
+        echo "  !! $sym=y did not survive olddefconfig"
+        exit 1
+    fi
+done
+echo "  CONFIG_MTK_GEN4M_WIFI=y, BT_MTK_BTIF=y, BT_MTKUART=y (old CONFIG_MTK_MT6833_CONN unset)"
 make -s $KMAKE -j"$(nproc)" dtbs
 DTB="$KOUT/arch/arm64/boot/dts/mediatek/mt6833-xiaomi-evergo.dtb"
 [ -f "$DTB" ] || { echo "dtb build failed"; exit 1; }
@@ -356,7 +366,7 @@ fedora)
 esac
 
 # enable the services we ship
-for u in sshd systemd-networkd systemd-resolved evergo-firstboot NetworkManager; do
+for u in sshd systemd-networkd systemd-resolved evergo-firstboot NetworkManager bluetooth; do
     if [ -e "$R/usr/lib/systemd/system/$u.service" ] || [ -e "$R/lib/systemd/system/$u.service" ]; then
         ln -sf "/usr/lib/systemd/system/$u.service" \
             "$R/etc/systemd/system/multi-user.target.wants/$u.service" 2>/dev/null || \

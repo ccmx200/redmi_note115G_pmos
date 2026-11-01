@@ -91,13 +91,16 @@ nmcli device wifi list
 | 存储 128 GB eMMC → 自动扩到 106 GiB | ✅ |
 | 显示（`mediatekdrmfb` 帧缓冲控制台） | ✅ |
 | Wi-Fi（MT6631 / gen4m；WMT 驱动与固件内置内核，`/usr/sbin/wmt-init` 拉起；带 `NetworkManager` + `nmtui`） | ✅ |
+| 蓝牙（CONNSYS 内置 BT 核，走 BTIF + btmtkuart；镜像内 bluez） | ✅ |
 | CDC-NCM（426 Mbps 链路，实测 ~5.2 MB/s）（高速模式，~4.5 MB/s） | ✅ |
 | SSH 密码登录 | ✅ |
 | 硬件看门狗 | ✅ |
 
-**未完成**：PMIC、**CPU 调频（cpufreq）**、蓝牙（内核已有 BTIF/btmtk 栈，镜像里还没装 bluez）、基带、音频、相机、触摸固件、USB Host
+**未完成**：PMIC、**CPU 调频（cpufreq）**、基带、音频、相机、触摸固件、USB Host
 
-> 📡 Wi-Fi 由新的内核 pin 提供：`master` 上的 `805764287e7b`（cb9ba2ee + 6 个 WMT/gen4m 提交，含 consys/wifi/btif 设备树节点）。它已经是完整的上游树，以前 `config/port` 里那套 DTS/头文件 vendored 补丁已删除。
+> 📡 Wi-Fi/蓝牙由新的内核 pin 提供：`bringup/evergo-mainline` 的 `a602c03b24`（作者 b350 实测树）——cb9ba2ee + WMT/gen4m WiFi 栈 + BTIF 蓝牙 + `evergo_defconfig`（含早期看门狗接管等运行期增强）。
+> 本仓库在该树上只加一个内核补丁（`config/patches/0001`：SOC 上跳过重复的 HIF-SDIO 注册，否则 WMT 初始化会 -EBUSY 退出）。以前 `config/port` 里那套 DTS/头文件 vendored 补丁已删除。
+> 蓝牙与 WiFi 共用 CONNSYS 的上电/ROM patch 流程，所以蓝牙也依赖 `evergo-wmt.service`（`wmt-init`）先把 CONNSYS 拉起来。
 
 > 🐌 因为没有 cpufreq，CPU 频率固定，USB 网络只有 **3.6 MB/s**（USB 2.0 HS 理论 60 MB/s）。
 > 详见 [踩坑记录](docs/TROUBLESHOOTING.md#-性能类)。

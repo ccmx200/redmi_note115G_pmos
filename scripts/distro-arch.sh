@@ -83,7 +83,7 @@ pacman -S --noconfirm --needed \
   btop htop fastfetch git wget curl nano vim tmux rsync unzip zip file less \
   man-db which pacman-contrib net-tools bind-tools iputils traceroute mtr whois \
   lm_sensors lsof strace sudo wpa_supplicant iw dhcpcd wireless-regdb \
-  networkmanager >/dev/null
+  networkmanager bluez >/dev/null
 # The tarball ships a locked root password and the image only allows password logins,
 # so a freshly flashed phone would be unreachable.
 echo "root:evergo" | chpasswd
