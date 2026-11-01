@@ -117,15 +117,36 @@ AC
             iproute2 iputils-ping net-tools less procps kmod tzdata \
             nano vim-tiny htop rsync unzip file man-db \
             wpasupplicant iw dhcpcd-base wireless-regdb \
-            network-manager bluez rfkill
+            network-manager bluez rfkill \
+            fonts-noto-cjk locales
         $APT autoremove --purge
         apt-get clean
         rm -rf /var/lib/apt/lists/*
+        echo "zh_CN.UTF-8 UTF-8" >> /etc/locale.gen
+        locale-gen >/dev/null 2>&1 || true
+        printf 'LANG=zh_CN.UTF-8\nLC_ALL=zh_CN.UTF-8\n' > /etc/default/locale
         echo root:evergo | chpasswd
+        echo LANG=zh_CN.UTF-8 > /etc/locale.conf
         echo evergo > /etc/hostname
         systemctl enable ssh 2>/dev/null || systemctl enable sshd 2>/dev/null || true
         systemctl enable systemd-networkd 2>/dev/null || true
     '
+    if [ "${EVERGO_EDITION:-minimal}" = desktop ]; then
+        if [ "$KIND" != ubuntu ]; then
+            echo "  !! desktop edition is only implemented for ubuntu"; exit 1
+        fi
+        log "desktop edition: GNOME + Chinese language/input"
+        chroot "$R" /usr/bin/qemu-aarch64-static /bin/sh -c '
+            set -e
+            export DEBIAN_FRONTEND=noninteractive
+            APT="apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
+            $APT install --no-install-recommends \
+                ubuntu-desktop-minimal language-pack-zh-hans \
+                language-pack-gnome-zh-hans ibus-libpinyin
+            apt-get clean
+            rm -rf /var/lib/apt/lists/*
+        '
+    fi
     ;;
 fedora)
     rm -f "$R"/etc/yum.repos.d/*.repo
@@ -157,7 +178,8 @@ EOF
             iproute iputils less procps-ng kmod tzdata nano vim-minimal \
             htop rsync unzip file man-db \
             wpa_supplicant iw dhcpcd wireless-regdb \
-            NetworkManager NetworkManager-tui bluez rfkill || true
+            NetworkManager NetworkManager-tui bluez rfkill \
+            google-noto-sans-cjk-fonts glibc-langpack-zh || true
         dnf -y clean all
         echo root:evergo | chpasswd
         echo evergo > /etc/hostname

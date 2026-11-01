@@ -38,7 +38,11 @@ KERNEL_COMMIT="${KERNEL_COMMIT:-5bba54524ae56cc211f823a7bf586271e5cb2eb5}"
 KERNEL_SRC="${KERNEL_SRC:-}"             # reuse an existing checkout if set
 RAM_GIB="${RAM_GIB:-6}"                  # 4/6/8 GiB units exist
 PANEL="${PANEL:-k16a_36_02_0a_vdo,lcm}"  # Tianma; CSOT is k16a_42_02_0b_vdo,lcm
-ROOTFS_MB="${ROOTFS_MB:-6144}"           # 6 GiB f2fs
+EDITION="${EDITION:-minimal}"             # minimal | desktop (ubuntu only)
+# a desktop rootfs needs much more room than the minimal one
+if [ -z "${ROOTFS_MB:-}" ]; then
+    [ "$EDITION" = desktop ] && ROOTFS_MB=12288 || ROOTFS_MB=6144
+fi
 # Which distribution to put in the image.  Each one is built by its own script,
 # scripts/distro-$DISTRO.sh, which populates a plain directory; the image creation,
 # initramfs and boot.img packing below are shared by all of them.
@@ -334,7 +338,8 @@ if [ ! -x "$HERE/scripts/distro-$DISTRO.sh" ]; then
     echo "  !! no scripts/distro-$DISTRO.sh (pick arch, debian, ubuntu or fedora)"
     exit 1
 fi
-bash "$HERE/scripts/distro-$DISTRO.sh" "$R" || { echo "  !! rootfs build failed"; exit 1; }
+EVERGO_EDITION="$EDITION" bash "$HERE/scripts/distro-$DISTRO.sh" "$R" || {
+    echo "  !! rootfs build failed"; exit 1; }
 echo "  $(du -sh "$R" | cut -f1) in $R"
 
 say "rootfs: upgrade to the latest packages"
@@ -441,6 +446,92 @@ if [ -e "$R/etc/systemd/system/evergo-watchdog.service" ]; then
     mkdir -p "$R/etc/systemd/system/sysinit.target.wants"
     ln -sf /etc/systemd/system/evergo-watchdog.service \
         "$R/etc/systemd/system/sysinit.target.wants/evergo-watchdog.service" 2>/dev/null || true
+fi
+
+# Every systemd image needs /sbin/init.  The chroot build occasionally loses the
+# usr-merged symlink the systemd postinst normally creates; without it the initramfs
+# drops to a shell instead of switch_root (the initramfs also self-heals this, but the
+# image should be correct on its own).
+if [ -e "$R/usr/lib/systemd/systemd" ]; then
+    if [ ! -e "$R/sbin/init" ]; then
+        mkdir -p "$R/usr/sbin"
+        ln -sfn ../lib/systemd/systemd "$R/usr/sbin/init" 2>/dev/null || true
+    fi
+    if [ ! -e "$R/usr/sbin/init" ]; then
+        mkdir -p "$R/usr/sbin"
+        ln -sfn ../lib/systemd/systemd "$R/usr/sbin/init" 2>/dev/null || true
+    fi
+fi
+
+# Desktop edition: a normal user for GDM (it refuses root) and autologin, so the
+# phone boots straight into the session without a keyboard or on-screen password.
+if [ "$EDITION" = desktop ]; then
+    say "rootfs: desktop user + GDM autologin"
+    python3 - "$R" <<'PYDESK'
+import os, subprocess, sys, shutil
+
+R = sys.argv[1]
+pw = os.path.join(R, 'etc/passwd')
+shadow = os.path.join(R, 'etc/shadow')
+group = os.path.join(R, 'etc/group')
+home = os.path.join(R, 'home/evergo')
+
+if 'evergo:' not in open(pw).read():
+    h = subprocess.run(['openssl', 'passwd', '-6', 'evergo'],
+                       capture_output=True, text=True).stdout.strip()
+    open(pw, 'a').write('evergo:x:1000:1000:Evergo:/home/evergo:/bin/bash\n')
+    open(shadow, 'a').write(f'evergo:{h}:19000:0:99999:7:::\n')
+    if 'evergo:' not in open(group).read():
+        open(group, 'a').write('evergo:x:1000:\n')
+    want = ('sudo', 'audio', 'video', 'input', 'render', 'netdev', 'plugdev', 'bluetooth')
+    lines = open(group).read().splitlines()
+    out = []
+    for line in lines:
+        f = line.split(':')
+        if f[0] in want and len(f) >= 4:
+            members = [m for m in f[3].split(',') if m]
+            if 'evergo' not in members:
+                f[3] = ','.join(members + ['evergo'])
+            line = ':'.join(f)
+        out.append(line)
+    open(group, 'w').write('\n'.join(out) + '\n')
+    skel = os.path.join(R, 'etc/skel')
+    if os.path.isdir(skel):
+        shutil.copytree(skel, home, dirs_exist_ok=True)
+    else:
+        os.makedirs(home, exist_ok=True)
+    os.makedirs(os.path.join(home, '.config'), exist_ok=True)
+    open(os.path.join(home, '.config/gnome-initial-setup-done'), 'w').close()
+    for root, dirs, files in os.walk(home):
+        os.chown(root, 1000, 1000)
+        for n in files:
+            try:
+                os.chown(os.path.join(root, n), 1000, 1000)
+            except OSError:
+                pass
+
+# GDM autologin
+os.makedirs(os.path.join(R, 'etc/gdm3'), exist_ok=True)
+open(os.path.join(R, 'etc/gdm3/custom.conf'), 'w').write(
+    '[daemon]\nAutomaticLoginEnable=True\nAutomaticLogin=evergo\n')
+
+# graphical target by default
+os.makedirs(os.path.join(R, 'etc/systemd/system'), exist_ok=True)
+for tgt in ('/usr/lib/systemd/system/graphical.target',
+            '/lib/systemd/system/graphical.target'):
+    if os.path.exists(os.path.join(R, tgt.lstrip('/'))):
+        dst = os.path.join(R, 'etc/systemd/system/default.target')
+        if os.path.islink(dst) or os.path.exists(dst):
+            os.unlink(dst)
+        os.symlink(tgt, dst)
+        break
+for gdm in ('/usr/lib/systemd/system/gdm3.service',
+            '/lib/systemd/system/gdm3.service',
+            '/usr/lib/systemd/system/gdm.service'):
+    if os.path.exists(os.path.join(R, gdm.lstrip('/'))):
+        os.symlink(gdm, os.path.join(R, 'etc/systemd/system/display-manager.service'))
+        break
+PYDESK
 fi
 
 say "rootfs: verify"

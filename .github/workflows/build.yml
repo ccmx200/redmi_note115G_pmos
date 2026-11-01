@@ -1,19 +1,18 @@
 name: build evergo images
 
 # Builds and publishes the images users flash:
-#   boot-<distro>-<ram>gib.img          kernel + initramfs that mounts userdata
-#   userdata-<distro>-<ram>gib.simg     the distribution itself, grown on first boot
+#   boot-<distro>[-desktop]-<ram>gib.img          kernel + initramfs that mounts userdata
+#   userdata-<distro>[-desktop]-<ram>gib.simg     the distribution, grown on first boot
 #
-# The kernel is compiled ONCE per RAM variant (job "boot"), not once per distro.
-# That job does NOT build any distribution rootfs: the initramfs only needs a
-# busybox (downloaded as a static aarch64 binary) and e2fsck/resize2fs for the
-# first-boot grow, so it uses a 4 MB Alpine minirootfs plus the e2fsprogs package
-# instead of spending minutes in a full Arch/Debian tree.  The distro jobs then
-# reuse the boot.img artifact (BOOT_IMG=...) and only build their root filesystem,
-# arch included.
+# The kernel is compiled ONCE per RAM variant (job "boot"), not once per distro, and
+# that job does not build any distribution rootfs: the initramfs only needs a busybox
+# (static download) and e2fsck/resize2fs for the first-boot grow, so it uses a small
+# Alpine minirootfs + e2fsprogs.  Every distro job then reuses the boot.img artifact.
 #
-# RAM variants are not interchangeable: the DTB (and therefore the Image) differs
-# between the 6 GiB and 8 GiB units, hence one boot build per RAM size.
+# Editions: "minimal" (the current images) and "desktop" (Ubuntu GNOME with Chinese
+# language/input support).  Desktop root filesystems are much bigger than 2 GiB, which
+# is the per-asset limit of a GitHub release; those userdata images are therefore only
+# attached to the workflow run artifacts and skipped in the release.
 
 on:
   push:
@@ -36,12 +35,18 @@ on:
         options: ['6', '8', 'all']
         default: 'all'
         required: true
+      edition:
+        description: 'image edition (desktop = Ubuntu GNOME + zh_CN)'
+        type: choice
+        options: [minimal, desktop, both]
+        default: 'both'
+        required: true
       panel:
         description: 'panel compatible (Tianma or CSOT)'
         default: 'k16a_36_02_0a_vdo,lcm'
         required: true
       rootfs_mb:
-        description: 'size of the rootfs image in MiB'
+        description: 'size of the rootfs image in MiB (desktop always uses 12288)'
         default: '6144'
         required: true
 
@@ -54,7 +59,6 @@ permissions:
   contents: write
 
 jobs:
-  # strategy.matrix cannot read inputs directly, so the matrices are computed here
   plan:
     runs-on: ubuntu-24.04
     outputs:
@@ -65,10 +69,10 @@ jobs:
         run: |
           distro="${{ github.event.inputs.distro || 'all' }}"
           ram="${{ github.event.inputs.ram_gib || 'all' }}"
+          edition="${{ github.event.inputs.edition || 'both' }}"
           [ "$distro" = "all" ] && distros="arch debian ubuntu fedora" || distros="$distro"
           [ "$ram"    = "all" ] && rams="6 8"                              || rams="$ram"
 
-          # boot images: one kernel build per RAM variant, no distribution rootfs
           boots=""
           for r in $rams; do
             [ -n "$boots" ] && boots="$boots,"
@@ -76,17 +80,26 @@ jobs:
           done
           echo "boots={\"include\":[$boots]}" >> "$GITHUB_OUTPUT"
 
-          # rootfs jobs: every requested distribution, each reusing the boot image
           rootfs=""
-          for d in $distros; do
-            for r in $rams; do
-              [ -n "$rootfs" ] && rootfs="$rootfs,"
-              rootfs="$rootfs{\"distro\":\"$d\",\"ram\":\"$r\"}"
+          add() {
+            [ -n "$rootfs" ] && rootfs="$rootfs,"
+            rootfs="$rootfs{\"distro\":\"$1\",\"ram\":\"$2\",\"edition\":\"$3\"}"
+          }
+          case "$edition" in
+            minimal) editions="minimal" ;;
+            desktop) editions="desktop" ;;
+            *)       editions="minimal desktop" ;;
+          esac
+          for e in $editions; do
+            for d in $distros; do
+              # the desktop edition is Ubuntu GNOME only
+              [ "$e" = "desktop" ] && [ "$d" != "ubuntu" ] && continue
+              for r in $rams; do add "$d" "$r" "$e"; done
             done
           done
           echo "rootfs={\"include\":[$rootfs]}" >> "$GITHUB_OUTPUT"
-          echo "boot builds: $boots"
-          echo "rootfs builds: $rootfs"
+          echo "boots: $boots"
+          echo "rootfs: $rootfs"
 
   # One kernel build per RAM variant; produces boot-<ram>gib.img only, no distro rootfs.
   boot:
@@ -170,15 +183,15 @@ jobs:
           path: boot/boot-*.img
           retention-days: 14
 
-  # One rootfs per distribution (arch included); the kernel comes from the boot job.
+  # One rootfs per distribution/edition; the kernel comes from the boot job.
   distro:
     needs: [plan, boot]
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 240
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.rootfs) }}
-    name: ${{ matrix.distro }} / ${{ matrix.ram }} GiB
+    name: ${{ matrix.distro }}${{ matrix.edition == 'desktop' && ' (desktop)' || '' }} / ${{ matrix.ram }} GiB
     steps:
       - uses: actions/checkout@v4
 
@@ -208,29 +221,39 @@ jobs:
 
       - name: build rootfs + userdata (kernel reused)
         run: |
+          set -e
+          rm=12288
+          if [ "${{ matrix.edition }}" = minimal ]; then rm="$ROOTFS_MB"; fi
           chmod +x build.sh scripts/*.sh
           sudo -E env "PATH=$PATH" "HOME=$HOME" \
             "DISTRO=${{ matrix.distro }}" \
+            "EDITION=${{ matrix.edition }}" \
             "RAM_GIB=${{ matrix.ram }}" \
-            "PANEL=$PANEL" "ROOTFS_MB=$ROOTFS_MB" \
+            "PANEL=$PANEL" "ROOTFS_MB=$rm" \
             "BOOT_IMG=$PWD/prebuilt/boot-${{ matrix.ram }}gib.img" ./build.sh
 
       - name: rename artifacts
         run: |
           set -e
-          d="${{ matrix.distro }}"; r="${{ matrix.ram }}"
-          mkdir -p dist
-          cp out/boot.img      "dist/boot-${d}-${r}gib.img"
-          cp out/userdata.simg "dist/userdata-${d}-${r}gib.simg"
-          SZ=$(stat -c%s "dist/userdata-${d}-${r}gib.simg")
-          LIMIT=2147483648
-          if [ "$SZ" -gt "$LIMIT" ]; then
-              echo "::error::userdata-${d}-${r}gib.simg is $SZ bytes, over GitHub's 2 GiB asset limit"
-              exit 1
+          d="${{ matrix.distro }}"; r="${{ matrix.ram }}"; e="${{ matrix.edition }}"
+          suffix="${d}-${r}gib"
+          [ "$e" = desktop ] && suffix="${d}-desktop-${r}gib"
+          rm -rf stage dist && mkdir -p stage dist
+          cp out/boot.img      "stage/boot-${suffix}.img"
+          cp out/userdata.simg "stage/userdata-${suffix}.simg"
+          SZ=$(stat -c%s "stage/userdata-${suffix}.simg")
+          echo "userdata-${suffix}.simg = $SZ bytes"
+          if [ "$SZ" -le 2147483648 ]; then
+              cp stage/* dist/
+          else
+              # GitHub release assets are capped at 2 GiB; keep the big userdata in the
+              # workflow artifact only and publish just the boot image in the release.
+              echo "::warning::userdata-${suffix}.simg is $SZ bytes (>2 GiB), skipping the release asset (use the workflow artifact)"
+              cp "stage/boot-${suffix}.img" dist/
           fi
-          echo "userdata-${d}-${r}gib.simg = $SZ bytes"
-          (cd dist && sha256sum * > "SHA256SUM-${d}-${r}gib.txt")
-          ls -l dist/
+          (cd stage && sha256sum * > "SHA256SUM-${suffix}.txt")
+          cp "stage/SHA256SUM-${suffix}.txt" dist/
+          ls -l stage/ dist/ || true
           echo "--- userdata is ext4? ---"
           file out/userdata.img || true
           dumpe2fs -h out/userdata.img 2>/dev/null | grep -E "volume name|Block count|Inode count" || true
@@ -238,8 +261,8 @@ jobs:
       - name: upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: evergo-${{ matrix.distro }}-${{ matrix.ram }}gib
-          path: dist/*
+          name: evergo-${{ matrix.distro }}${{ matrix.edition == 'desktop' && '-desktop' || '' }}-${{ matrix.ram }}gib
+          path: stage/*
           retention-days: 14
 
       - name: publish release

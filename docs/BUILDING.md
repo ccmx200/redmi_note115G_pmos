@@ -41,7 +41,13 @@ Fork 仓库 → **Actions** → 「build evergo images」→ **Run workflow**
 | `distro` | `arch` / `debian` / `ubuntu` / `fedora` / `all` | 构建哪些发行版 |
 | `ram_gib` | `6` / `8` / `all` | 内存变体 |
 | `panel` | `k16a_36_02_0a_vdo,lcm`（天马）/ `k16a_42_02_0b_vdo,lcm`（华星） | 屏幕型号 |
-| `rootfs_mb` | 默认 `6144` | 根文件系统初始大小 |
+| `edition` | `minimal` / `desktop` / `both` | `desktop` = Ubuntu GNOME（含中文语言/输入法），默认 both |
+| `rootfs_mb` | 默认 `6144`（desktop 固定 12288） | 根文件系统初始大小 |
+
+**桌面版（desktop）**：`ubuntu-desktop-minimal` + GNOME + 中文语言包、字体和 `ibus-libpinyin`；
+镜像里会自动建 `evergo/evergo` 用户并开启 GDM 自动登录。桌面 rootfs 约 10 GiB，
+**userdata 稀疏镜像超过 2 GiB，因此只上传到 workflow artifacts，不进 Release**（Release 只放
+`boot-*.img` 和小于 2 GiB 的 userdata）。所有版本都带中文字体和 `zh_CN.UTF-8` locale。
 
 **内核只按内存变体编译，不再每个发行版编译一次，而且 boot job 不再构建任何发行版 rootfs**：
 
