@@ -296,7 +296,8 @@ FW_FILES="WIFI_RAM_CODE_soc2_2_1a_1.bin WIFI_RAM_CODE_soc2_2_1_1.bin \
 soc2_2_ram_mcu_1a_1_hdr.bin soc2_2_ram_mcu_1_1_hdr.bin \
 soc2_2_ram_wifi_1a_1_hdr.bin soc2_2_ram_wifi_1_1_hdr.bin \
 soc2_2_ram_bt_1a_1_hdr.bin soc2_2_ram_bt_1_1_hdr.bin \
-WMT_SOC.cfg BT_FW.cfg wifi.cfg txpowerctrl.cfg"
+WMT_SOC.cfg BT_FW.cfg wifi.cfg txpowerctrl.cfg \
+novatek_ts_ct_fw.bin novatek_ts_fw.bin"
 rm -rf "$FW"; mkdir -p "$FW"
 for f in $FW_FILES; do
     [ -f "$HERE/config/firmware/$f" ] || { echo "  !! missing config/firmware/$f"; exit 1; }
@@ -674,8 +675,28 @@ if [ -b /dev/sdc ]; then
 else
     log "no /dev/sdc"
 fi
-if [ -x /newroot/sbin/init ]; then
-    log "switch_root"
+# A systemd rootfs built inside a chroot can lose the /sbin/init symlink that
+# the systemd postinst normally creates.  Without it this initramfs fell through
+# to a shell even though the system itself was perfectly bootable, which is how
+# "the board never reaches switch_root" happened.  Create it here and hand over
+# to an explicit init path so a missing /sbin/init cannot stop the boot.
+INITBIN=""
+if [ -x /newroot/usr/lib/systemd/systemd ]; then
+    if [ ! -e /newroot/sbin/init ]; then
+        ln -sfn ../lib/systemd/systemd /newroot/sbin/init 2>/dev/null
+        log "created /sbin/init -> ../lib/systemd/systemd"
+    fi
+    if [ ! -e /newroot/usr/sbin/init ]; then
+        ln -sfn ../lib/systemd/systemd /newroot/usr/sbin/init 2>/dev/null
+    fi
+fi
+[ -x /newroot/sbin/init ] && INITBIN=/sbin/init
+[ -z "$INITBIN" ] && [ -x /newroot/usr/sbin/init ] && INITBIN=/usr/sbin/init
+[ -z "$INITBIN" ] && [ -x /newroot/init ] && INITBIN=/init
+[ -z "$INITBIN" ] && [ -x /newroot/bin/sh ] && INITBIN=/bin/sh
+
+if [ -n "$INITBIN" ]; then
+    log "switch_root -> $INITBIN"
     # Stop the feed loop and close the fd before handing over.  Otherwise it survives
     # switch_root holding /dev/watchdog open, the systemd unit gets EBUSY, nobody feeds
     # the watchdog and the phone resets every 31 s.  nowayout=0, so closing the last
@@ -688,7 +709,7 @@ if [ -x /newroot/sbin/init ]; then
     mount --move /dev  /newroot/dev  2>/dev/null
     mount --move /proc /newroot/proc 2>/dev/null
     mount --move /sys  /newroot/sys  2>/dev/null
-    exec switch_root /newroot /sbin/init
+    exec switch_root /newroot "$INITBIN"
 fi
 
 log "no init, dropping to a shell"

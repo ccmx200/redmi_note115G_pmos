@@ -93,6 +93,7 @@ nmcli device wifi list
 | 存储 128 GB eMMC → 自动扩到 106 GiB | ✅ |
 | 显示（`mediatekdrmfb` 帧缓冲控制台） | ✅ |
 | Wi-Fi（MT6631 / gen4m；WMT 驱动与固件内置内核，`/usr/sbin/wmt-init` 拉起；带 `NetworkManager` + `nmtui`） | ✅ |
+| 触摸（Novatek NT36672C，固件内嵌） | ✅ |
 | 蓝牙（CONNSYS 内置 BT 核，BTIF + btmtkuart 已编入内核；BlueZ 控制器地址待解决） | 🟡 |
 | CDC-NCM（426 Mbps 链路，实测 ~5.2 MB/s）（高速模式，~4.5 MB/s） | ✅ |
 | SSH 密码登录 | ✅ |

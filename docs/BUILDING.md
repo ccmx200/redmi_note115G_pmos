@@ -439,3 +439,10 @@ CI 的 `build` job 会：
 [← 返回 README](../README.md)
 
 </div>
+
+
+## 启动细节（initramfs）
+
+* `/sbin/init` 自愈：chroot 里构建的 systemd 发行版有时会丢 `/sbin/init` 符号链接，initramfs 现在会在 switch_root 前创建它（`/sbin/init -> ../lib/systemd/systemd`），并以显式 init 路径 `exec switch_root /newroot "$INITBIN"` 交接；否则会停在 initramfs shell。
+* 触摸固件与 WiFi/BT blob 一样通过 `CONFIG_EXTRA_FIRMWARE` 内嵌进 Image，所以驱动在 initramfs 阶段就能 `request_firmware()` 成功（日志 `Update firmware success!`）。
+* USB 不再被 `g_serial` 占用：内核不编 `CONFIG_USB_G_SERIAL`，initramfs 用 configfs 建 CDC-NCM，系统起来后 `usb0` 走 systemd-networkd（169.254.42.1），SSH 可用。
