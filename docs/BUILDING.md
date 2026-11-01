@@ -78,6 +78,8 @@ GITHUB_TOKEN=ghp_xxx ./scripts/cleanup-releases.py --keep 5 --yes
 
 ---
 
+> 内核崩了怎么抓日志（无串口）：见 [PANIC.md](PANIC.md)。
+
 ## 本地构建
 
 ### 依赖
