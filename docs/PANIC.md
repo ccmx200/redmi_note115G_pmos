@@ -76,3 +76,41 @@ Kernel panic - not syncing: SP/PC alignment exception: Fatal exception in interr
    marginal 的可能（老机器 + 之前的 ext4 报错也要留意）。
 4. 复现后立刻 `./scripts/read-expdb.sh` 拿 trace；如果是内核 bug，把 trace 贴回上游
    `KevinLmK0702/linux-evergo`。
+
+## 高负载下的 allocator panic（2026-11-01，装桌面时）
+
+装 `ubuntu-desktop` 时板子在 uptime ~95 s 和 ~204 s 各崩一次，expdb 里取到的两条：
+
+```
+# 1) 中断上下文里跳到空指针（PC = 0）
+CPU: 0 PID: 0 Comm: swapper/0  pc : 0x0
+Call trace:
+ 0x0
+ rcu_core_si+0x10/0x1c        ← 软中断回调指针被写坏
+ handle_softirqs / __do_softirq / __irq_exit_rcu / el1_interrupt / default_idle_call
+Kernel panic - not syncing: Oops: Fatal exception in interrupt
+
+# 2) 写块设备时 SLUB refill 里 NULL 解引用
+CPU: 3 PID: 240 Comm: dd
+Unable to handle kernel NULL pointer dereference at virtual address 00000000000000c0
+pc : __refill_objects_node+0x2a4   (ldr x5, [x6, x1] ；x6=0，x1=0xc0)
+Call trace:
+ __refill_objects_node → refill_objects → __pcs_replace_empty_main
+ kmem_cache_alloc_noprof → bio_alloc_bioset → __bh_submit
+ __block_write_full_folio → blkdev_writepages → bdev_release
+```
+
+两条都是**内存/分配器数据被踩**的表现（软中断函数指针变成 0、slab sheaf 里出现 NULL
+对象指针），压力越大越容易命中。和 display 的 NULL state 不是同一个问题。
+
+**缓解**：给 6 GiB 版本加 swap，降低「真的把内存用满」的概率。镜像里已经加了
+`evergo-swapfile.service`（MemTotal < 7 GiB 时首次启动创建 3 GiB `/swapfile` 并
+`swapon`）。装桌面这种重活建议：
+
+```bash
+fallocate -l 3G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+systemd-run --unit=desktop-install --collect --no-block \
+    /bin/bash -c 'apt-get -y --no-install-recommends install ubuntu-desktop-minimal > /root/desktop-install.log 2>&1'
+```
+
+彻底避免的办法是**离线把桌面装进镜像**（在 PC 的 chroot 里装好再刷），不在手机上跑 apt。
