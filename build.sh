@@ -213,7 +213,7 @@ BOOTARGS = (
     # fbcon=nodefer is required: without it the kernel does not reach userspace on
     # this panel (the RNDIS gadget never enumerates).  It also means the Tux logo is
     # drawn before the DSI panel is up and is lost - a cosmetic trade we accept.
-    "fbcon=nodefer cma=256M"
+    "fbcon=nodefer cma=256M mem=4G"
 )
 s, n = re.subn(r'bootargs = "[^"]*";', f'bootargs = "{BOOTARGS}";', s)
 if n != 1:
@@ -529,7 +529,11 @@ for gdm in ('/usr/lib/systemd/system/gdm3.service',
             '/lib/systemd/system/gdm3.service',
             '/usr/lib/systemd/system/gdm.service'):
     if os.path.exists(os.path.join(R, gdm.lstrip('/'))):
-        os.symlink(gdm, os.path.join(R, 'etc/systemd/system/display-manager.service'))
+        dst = os.path.join(R, 'etc/systemd/system/display-manager.service')
+        # gdm3's postinst may already have created this link
+        if os.path.lexists(dst):
+            os.unlink(dst)
+        os.symlink(gdm, dst)
         break
 PYDESK
 fi
