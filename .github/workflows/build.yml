@@ -93,6 +93,7 @@ jobs:
             gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
             ccache bc bison flex libssl-dev libelf-dev libncurses-dev \
             cpio gzip xz-utils zstd p7zip-full python3 device-tree-compiler patch \
+            debootstrap \
             e2fsprogs qemu-user-static android-sdk-libsparse-utils
           aarch64-linux-gnu-gcc --version | head -1
           mke2fs -V 2>&1 | head -1

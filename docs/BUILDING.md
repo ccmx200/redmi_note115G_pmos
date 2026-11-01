@@ -98,32 +98,37 @@ ARCH_TARBALL=/path/ArchLinuxARM-aarch64-latest.tar.gz ./build.sh
 
 ## 多发行版机制
 
-**核心原则：用官方预构建的 rootfs，不自己 bootstrap。**
+**核心原则：能用官方预构建的 rootfs 就直接解压，Debian 没有官方 rootfs 时才 bootstrap。**
 
-| 发行版 | 官方源文件 | 来源 |
+| 发行版 | 源文件 | 来源 |
 |:---|:---|:---|
 | Arch | `ArchLinuxARM-aarch64-latest.tar.gz` | archlinuxarm.org / 清华 |
-| Debian | `debian-13-generic-arm64.tar.xz` | cloud.debian.org |
+| Debian | debootstrap 生成的 rootfs（`main`，minbase） | 清华 Debian 镜像 |
 | Ubuntu | `ubuntu-base-26.04-base-arm64.tar.gz` | cdimage.ubuntu.com / 清华 |
 | Fedora | `Fedora-WSL-Base-44-*.aarch64.wsl`（plain tar） | 清华 / USTC |
 
-**为什么不用 debootstrap / mmdebstrap / dnf --installroot**
+**为什么 Debian 用 debootstrap**
 
-| 问题 | 说明 |
-|:---|:---|
-| 密钥轮换 | `debian-archive-keyring` 旧了签不了新版，构建直接挂 |
-| 宿主污染 | mmdebstrap 依赖宿主的 apt 配置、代理、架构支持 |
-| 报错难读 | 一行 `apt-get 失败` 背后可能是 20 个包 403 |
-| 慢 | 从零装 300+ 包要十几分钟，解压官方包只要几秒 |
-| 会漂移 | 同一份 script 在不同日期构建，结果不同 |
+Debian 官方**没有** root filesystem tarball：cloud.debian.org 的
+`debian-<suite>-generic*.tar.xz` 是磁盘镜像（解压出来是 `disk.raw`），不是文件树。
+之前那份脚本照着 Ubuntu 的写法下载并解压它，CI 里就报
+`cp: cannot create .../usr/bin/qemu-aarch64-static: No such file or directory`。
+所以 Debian 改回 `debootstrap --foreign` + qemu-user 二阶段；脚本里用
+`--no-check-gpg`，包本身仍由 apt 校验。
 
-官方 tarball 是**别人已经构建好的成品**，解压即得，不会漂。
+想要"解压即得"的话，可以自己先用 debootstrap 生成一份 tarball，放到本地/内网
+用 `DEBIAN_ROOTFS_TARBALL=/path/to/debian-trixie-arm64.tar.xz` 复用（脚本保留了这个环境变量）。
+
+**为什么其他发行版不 bootstrap**
+
+Arch/Ubuntu/Fedora 都有官方 rootfs tarball，解压只要几秒，也不会因为宿主的
+apt 配置、代理、密钥轮换而漂；能直接解压就不从零装 300+ 包。
 
 ### 脚本分工
 
 ```
 scripts/distro-arch.sh      Arch 专属（tarball + pacman -Syu）
-scripts/distro-debian.sh    Debian 专属（下载 + 解压 + 调 common）
+scripts/distro-debian.sh    Debian 专属（debootstrap + qemu 二阶段 + 调 common）
 scripts/distro-ubuntu.sh    Ubuntu 专属（下载 + 解压 + 调 common）
 scripts/distro-fedora.sh    Fedora 专属（下载 + 解压 + 调 common）
 scripts/distro-common.sh    debian/ubuntu/fedora 的公共配置

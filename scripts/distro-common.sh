@@ -74,7 +74,7 @@ debian|ubuntu)
         SUITE=trixie
         MIRROR="$TUNA_DEB/debian"
         SEC="$TUNA_DEB/debian-security"
-        EXTRA="contrib non-free non-free-firmware"
+        EXTRA="main contrib non-free non-free-firmware"
     else
         SUITE=resolute
         MIRROR="$TUNA_DEB/ubuntu-ports"
