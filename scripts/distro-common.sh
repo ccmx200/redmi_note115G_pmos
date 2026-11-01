@@ -140,6 +140,9 @@ AC
             set -e
             export DEBIAN_FRONTEND=noninteractive
             APT="apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
+            # the main install block above ends with apt-get clean + rm -rf
+            # /var/lib/apt/lists, so refresh the indexes before installing GNOME
+            apt-get update
             $APT install --no-install-recommends \
                 ubuntu-desktop-minimal language-pack-zh-hans \
                 language-pack-gnome-zh-hans ibus-libpinyin
