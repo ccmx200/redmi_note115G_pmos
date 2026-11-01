@@ -452,3 +452,31 @@ CI 的 `build` job 会：
 * `/sbin/init` 自愈：chroot 里构建的 systemd 发行版有时会丢 `/sbin/init` 符号链接，initramfs 现在会在 switch_root 前创建它（`/sbin/init -> ../lib/systemd/systemd`），并以显式 init 路径 `exec switch_root /newroot "$INITBIN"` 交接；否则会停在 initramfs shell。
 * 触摸固件与 WiFi/BT blob 一样通过 `CONFIG_EXTRA_FIRMWARE` 内嵌进 Image，所以驱动在 initramfs 阶段就能 `request_firmware()` 成功（日志 `Update firmware success!`）。
 * USB 不再被 `g_serial` 占用：内核不编 `CONFIG_USB_G_SERIAL`，initramfs 用 configfs 建 CDC-NCM，系统起来后 `usb0` 走 systemd-networkd（169.254.42.1），SSH 可用。
+
+## 桌面版与中文
+
+* `edition=minimal`：现有最小镜像（SSH + nmtui + WiFi + 触摸），默认 6144 MiB rootfs。
+* `edition=desktop`：Ubuntu GNOME。`build.sh` 里 `EDITION=desktop` 会自动把 rootfs 提到
+  12288 MiB，并在镜像里创建 `evergo/evergo` 用户、开 GDM 自动登录、默认 `graphical.target`；
+  `scripts/distro-common.sh` 额外安装 `ubuntu-desktop-minimal`、`language-pack-zh-hans`、
+  `language-pack-gnome-zh-hans`、`ibus-libpinyin`。
+* **所有发行版**都加了中文字体（`fonts-noto-cjk` / `noto-fonts-cjk` /
+  `google-noto-sans-cjk-fonts`）和 `zh_CN.UTF-8` locale。
+* 桌面 userdata 稀疏镜像超过 GitHub Release 的 **2 GiB/asset** 限制：workflow 会把大镜像
+  只上传到 run artifacts，Release 里只放 `boot-*.img`（和 <2 GiB 的小镜像），并打
+  `::warning::`。要拿桌面镜像请从 Actions run 的 artifacts 下载。
+
+## 构建流水线（当前）
+
+* `plan`：根据 `distro` / `ram_gib` / `edition` 生成矩阵。
+* `boot`：**每个内存变体只编一次内核**，`KERNEL_ONLY=1` 跳过所有发行版 rootfs；
+  日志里会看到 `kernel-only build: distribution rootfs + userdata skipped`，
+  **不会再为每个发行版去编 Arch**（旧版本 boot job 会跑默认发行版 arch，这就是
+  “每个发行版都在编 arch”的原因，已修复）。
+* `distro`：下载 `boot-<ram>gib` artifact，`BOOT_IMG=` 复用内核，只建对应发行版 rootfs
+  和 userdata；`DISTRO`/`EDITION` 由矩阵传入。
+
+## 文档提交不触发构建
+
+`.github/workflows/build.yml` 的 `push.paths-ignore` 包含 `README.md`、`docs/**`、`*.md`，
+所以**只改文档的提交不会触发 CI 构建**；要发版请手动 Run workflow 或改代码提交。

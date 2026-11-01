@@ -51,6 +51,25 @@ fastboot reboot
 
 > 💡 Windows 版 fastboot 处理不了 6 GiB 文件，见 **[教程](docs/TUTORIAL.md#windows-用户注意)**。
 
+### 桌面版（可选）
+
+CI 的 `edition=desktop` 会构建 **Ubuntu GNOME + 中文语言/输入法** 版本（`ubuntu-desktop-minimal`
++ `language-pack-zh-hans` + `fonts-noto-cjk` + `ibus-libpinyin`，自动创建 `evergo/evergo`
+用户并开 GDM 自动登录）。桌面 rootfs 约 10 GiB，**userdata 稀疏镜像超过 2 GiB，所以只放在
+workflow artifacts，不进 Release**；Release 里只有它的 `boot-*.img` 和小于 2 GiB 的镜像。
+
+### 已知问题：高负载下的内存不稳定（重要）
+
+这台机器在**高负载/内存压力大**时会随机 panic（`pc : 0x0`、slab refill NULL、Bad page map），
+排查结果**不是 WiFi/显示驱动的问题**：`memtester 4G` 直接报出数百万个数据不匹配，而
+`memtester 3G` 基本干净——错误跟「用到了多少内存」相关，详见 [panic 记录](docs/PANIC.md)。
+
+* 镜像里已加 `evergo-swapfile.service`（RAM < 7 GiB 时首次启动建 3 GiB swap），降低压力；
+* 本机实测把内核内存限制到 `mem=4G` 后稳定性明显改善（`build.sh` 里的 `mem=4G` 是可选的
+  实验项，是否默认开启见 [构建指南](docs/BUILDING.md)）；
+* **装桌面请用 CI 的 desktop 镜像/离线装**，不要在手机上跑 `apt install ubuntu-desktop`，
+  那是触发 panic 最典型的场景。
+
 ### 3. 连上
 
 **首次开机约 1-10 分钟**（自动扩容 6 GiB → 106 GiB），然后：
