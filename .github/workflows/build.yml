@@ -139,8 +139,8 @@ jobs:
           sudo cp /usr/bin/qemu-aarch64-static rootfs-alpine/usr/bin/
           echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/latest-stable/main" | sudo tee rootfs-alpine/etc/apk/repositories
           sudo cp /etc/resolv.conf rootfs-alpine/etc/resolv.conf
-          sudo chroot rootfs-alpine /usr/bin/qemu-aarch64-static /bin/sh -c 'apk add --no-cache e2fsprogs'
-          sudo ls -l rootfs-alpine/sbin/e2fsck rootfs-alpine/sbin/resize2fs
+          sudo chroot rootfs-alpine /usr/bin/qemu-aarch64-static /bin/sh -c 'apk add --no-cache e2fsprogs e2fsprogs-extra'
+          sudo find rootfs-alpine -maxdepth 3 \( -name e2fsck -o -name resize2fs \) -printf '%p\n'
 
       - name: build kernel (no distribution rootfs)
         run: |
