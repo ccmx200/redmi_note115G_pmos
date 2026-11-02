@@ -537,3 +537,20 @@ Phosh/GNOME 因此「卡爆」。
 改完后真机验证：Phosh 使用 `GL renderer: Mali-G57 MC2 (Panfrost)`，dmesg 中
 panfrost fault 归零，滑动/应用/手势都流畅。若 GPU 仍异常，可以临时用
 `WLR_RENDERER=pixman` 回退软件渲染（能用的下限）。
+
+## 内核基线、CVE 与蓝牙（2026-11）
+
+* 内核已改为 **ccmx200/linux-evergo master**，pin 到 `c5d68dde`：它在作者最新 tree
+  基础上加了 MT6833 GPU 的 OPP 表/固定电压（0.78125 V core、0.85 V VSRAM）和
+  panfrost job timeout 2000 ms。这样构建脚本不再需要在本地 patch GPU DTS。
+* 我们仍是 **7.3-rc4** 基线，所以做了两个安全处理：
+  * **CVE-2026-31648**（filemap_map_pages nr_pages 下溢，arm64 上 stress 触发
+    Bad page state）：本 tree 已经包含修复（`end_pgoff` 在 `next_uptodate_folio()` 之前计算），
+    无需额外处理；
+  * **CVE-2026-98385**（account_mm_sched 的 mm UAF，7.3-rc5 才修）：在
+    `config/evergo.config` 里 **关闭 `CONFIG_SCHED_CACHE`**，把这条竞争路径从编译期去掉。
+    长期方案是把整个 MT6833 port rebase 到 7.3-rc5+/稳定版。
+* 蓝牙（新 tree）：`btmtk_stp` 从 `/lib/firmware/mediatek/mt6833/BT_Addr`
+  （6 字节，MSB first）读 BD 地址；Android 的出厂地址在 nvdata 里，主线暂时解不出。
+  initramfs 在首次启动时生成一个 locally-administered 地址并持久化到 rootfs，
+  **所以刷机后第一次启动 BT 无地址，重启一次后生效**。bluez 服务已默认启用。
