@@ -155,3 +155,30 @@ Arch。现在 `KERNEL_ONLY=1` 会在 `rootfs` 段之前直接跳过所有发行�
 `git add build.sh` 一起带进了仓库，于是 build-51/52/53 产出的所有镜像都被限制到
 3.8 GiB（`/proc/cmdline` 里有 `mem=4G`）。已撤回，镜像恢复 6 GiB；如果以后想再压内存，
 在 `build.sh` 的 BOOTARGS 里加回 `mem=4G` 即可（代价是可用 3.8 GiB）。
+
+## 2026-11-03：GPU/BT 修好后仍然存在的 slab/写回 oops
+
+在 build-69（kernel 0334da9 + CONFIG_SCHED_CACHE 关闭 + GPU OPP）上，重负载
+（apt 下载/解包 + 根文件系统 loop 写回）时段仍然出现两次非致命 oops：
+
+```
+#1  Workqueue: loop0 loop_rootcg_workfn
+    pc : __refill_objects_node+0x2a4        (slab sheaf 里 NULL/负 node)
+    refill_objects -> __pcs_replace_empty_main -> kmem_cache_alloc_noprof
+    -> alloc_buffer_head -> folio_alloc_buffers
+
+#2  Workqueue: writeback wb_workfn (flush-8:32)
+    pc : __block_write_full_folio+0xd4
+    block_write_full_folio -> blkdev_writepages ...
+```
+
+之后系统会卡死（SSH banner 超时），需要 ESP32 断电重启。结论：
+
+* 不是 GPU（panfrost fault 计数为 0）也不是 BT 的问题；
+* CVE-2026-31648（filemap_map_pages 下溢）在本 tree 里已修复，CVE-2026-98385
+  （sched cache UAF）已通过关闭 CONFIG_SCHED_CACHE 规避，但都没能消掉这个 oops；
+* 它落在 SLUB per-CPU sheaf 和 block writeback 路径，属于 **7.3-rc4 基线里的
+  内存管理/块层问题**（或本 port 的 trigger）。当前 kernel 仓库没有 7.3-rc5/稳定版
+  tag，要根治需要把整个 MT6833 port rebase 到更新的 mainline，或继续 backport
+  具体修复。
+* 临时缓解可试 `mem=4G`/`mem=5G` 限制内存压力（构建脚本 BOOTARGS 加回即可）。
