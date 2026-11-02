@@ -140,7 +140,9 @@ AC
             log "xfce edition: XFCE + LightDM + Chinese language/input"
             PKGS="xfce4-panel xfwm4 xfdesktop4 xfce4-session xfce4-settings \
                   xfce4-terminal thunar thunar-volman lightdm lightdm-gtk-greeter \
-                  dbus-x11 language-pack-zh-hans ibus-libpinyin fonts-noto-cjk"
+                  dbus-x11 xserver-xorg xserver-xorg-input-libinput \
+                  xserver-xorg-video-fbdev xinit x11-xserver-utils \
+                  language-pack-zh-hans ibus-libpinyin fonts-noto-cjk"
         else
             log "desktop edition: GNOME + Chinese language/input"
             PKGS="ubuntu-desktop-minimal gnome-terminal \
