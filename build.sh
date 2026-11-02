@@ -200,6 +200,38 @@ s = re.sub(r'compatible = "k16a_[0-9a_]+[a-z]*_vdo,lcm";', f'compatible = "{pane
 # here is stable at high speed and measured ~5x faster (0.9 -> 4.5 MB/s over scp).
 s = s.replace('maximum-speed = "full-speed";', 'maximum-speed = "high-speed";', 1)
 
+# GPU: uncalibrated vendor OPP voltages make panfrost fault (JOB_READ_FAULT,
+# translation faults, job timeouts) and the compositor falls back to software
+# rendering, which is why Phosh/GNOME stutter.  The a22x-mainline port (same
+# MT6833) found 0.78125 V core + 0.85 V SRAM clean on every boot, so use that.
+if 'gpu_opp_table' not in s:
+    gpu = """
+&gpu {
+	operating-points-v2 = <&gpu_opp_table>;
+};
+
+&{/} {
+	gpu_opp_table: opp-table-gpu {
+		compatible = "operating-points-v2";
+		opp-shared;
+		opp-390000000 { opp-hz = /bits/ 64 <390000000>; opp-microvolt = <781250>; };
+		opp-467000000 { opp-hz = /bits/ 64 <467000000>; opp-microvolt = <781250>; };
+		opp-545000000 { opp-hz = /bits/ 64 <545000000>; opp-microvolt = <781250>; };
+		opp-622000000 { opp-hz = /bits/ 64 <622000000>; opp-microvolt = <781250>; };
+		opp-700000000 { opp-hz = /bits/ 64 <700000000>; opp-microvolt = <781250>; };
+		opp-790000000 { opp-hz = /bits/ 64 <790000000>; opp-microvolt = <781250>; };
+		opp-880000000 { opp-hz = /bits/ 64 <880000000>; opp-microvolt = <781250>; };
+		opp-955000000 { opp-hz = /bits/ 64 <955000000>; opp-microvolt = <781250>; };
+	};
+};
+
+&mt6359_vsram_md_ldo_reg {
+	regulator-min-microvolt = <850000>;
+	regulator-max-microvolt = <850000>;
+};
+"""
+    s = s.rstrip() + "\n" + gpu + "\n"
+
 # command line: trimmed for speed, and with the watchdog thresholds relaxed.
 # The author's loglevel=8 + ignore_loglevel + drm.debug=0x1e emit ~1.4 MB per boot;
 # with a synchronous console that is minutes of blocked boot.  softlockup_panic=1

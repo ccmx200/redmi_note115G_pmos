@@ -519,3 +519,21 @@ XFCE 虽然流畅，但它的 UI 是桌面式的，触摸目标和交互不适�
 * gdm 自动登录 `evergo`，并在 `/var/lib/AccountsService/users/evergo` 里把
   `Session=phosh` 写死（否则 gdm 会默认进 GNOME）；
 * rootfs 默认 10 GiB。
+
+## GPU（Panfrost）与 Phosh 流畅度（2026-11）
+
+我们的 DTS 之前**没有 GPU OPP 表**，panfrost 用未校准的电压跑，GPU 会随机
+`JOB_READ_FAULT` / translation fault / job timeout（每次卡 1-3 秒），合成器就退化成软件渲染，
+Phosh/GNOME 因此「卡爆」。
+
+参考同 SoC 的 [a22x-mainline](https://github.com/Dodaskot/a22x-mainline)（Galaxy A22 5G, MT6833）：
+厂商 OPP 电压依赖 EEMG 校准，mainline 不做校准，必须用保守电压。照它的结论改成
+
+* GPU core（VPROC1 buck）= 固定 **0.78125 V**；
+* GPU SRAM（VSRAM_MD LDO）= 固定 **0.85 V**；
+* 390–955 MHz 的 8 个 OPP 全部写 781250（`build.sh` 的 DTS 适配里自动注入
+  `gpu_opp_table` 和 regulator 覆盖，避免树内手改漂移）。
+
+改完后真机验证：Phosh 使用 `GL renderer: Mali-G57 MC2 (Panfrost)`，dmesg 中
+panfrost fault 归零，滑动/应用/手势都流畅。若 GPU 仍异常，可以临时用
+`WLR_RENDERER=pixman` 回退软件渲染（能用的下限）。
