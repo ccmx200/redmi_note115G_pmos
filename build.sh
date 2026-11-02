@@ -34,7 +34,7 @@ KERNEL_BRANCH="${KERNEL_BRANCH:-master}"
 # btmtk_stp takes the per-unit BD address from
 # /lib/firmware/mediatek/mt6833/BT_Addr).  Pinning by SHA keeps builds reproducible
 # if the branch is rewritten.
-KERNEL_COMMIT="${KERNEL_COMMIT:-c5d68dde5d4ecc9187084322ef7370b9ce3e4a91}"
+KERNEL_COMMIT="${KERNEL_COMMIT:-0334da9dc40b2d0c15e01d24c1f53dab2868f852}"
 KERNEL_SRC="${KERNEL_SRC:-}"             # reuse an existing checkout if set
 RAM_GIB="${RAM_GIB:-6}"                  # 4/6/8 GiB units exist
 PANEL="${PANEL:-k16a_36_02_0a_vdo,lcm}"  # Tianma; CSOT is k16a_42_02_0b_vdo,lcm
@@ -679,6 +679,7 @@ cp "$BB" "$IR/bin/busybox"; chmod 755 "$IR/bin/busybox"
 # 31 seconds.  usleep is the preferred delay and ps/kill are needed to stop that loop.
 for a in sh mount umount cat gzip losetup switch_root sleep usleep echo ls mkdir ln sync \
          dd blockdev df head tail grep sed touch cut awk ps kill killall \
+         od tr printf \
          rm rmdir find ifconfig tc sysctl; do
     ln -sf busybox "$IR/bin/$a"
 done
