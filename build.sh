@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Build the evergo (Redmi Note 11T 5G / MT6833) images - Arch Linux ARM variant.
+# Build the evergo (Redmi Note 11T 5G / MT6833) images - multi-distro.
 #
 # Produces, in out/:
 #   boot.img            kernel + minimal initramfs (switch_root only)
-#   userdata.img.gz     Arch Linux ARM on f2fs, 6 GiB
+#   userdata.img.gz     <distribution> on ext4, sizes from ROOTFS_MB
 #   userdata.simg       the same filesystem in Android sparse format (for fastboot -S)
 #
 # This replaced an earlier Alpine/ext4 build.  What changed and why:
@@ -213,7 +213,7 @@ BOOTARGS = (
     # fbcon=nodefer is required: without it the kernel does not reach userspace on
     # this panel (the RNDIS gadget never enumerates).  It also means the Tux logo is
     # drawn before the DSI panel is up and is lost - a cosmetic trade we accept.
-    "fbcon=nodefer cma=256M"
+    "fbcon=nodefer cma=256M mem=5G"
 )
 s, n = re.subn(r'bootargs = "[^"]*";', f'bootargs = "{BOOTARGS}";', s)
 if n != 1:
@@ -394,7 +394,7 @@ fedora)
 esac
 
 # enable the services we ship
-for u in sshd systemd-networkd systemd-resolved evergo-firstboot NetworkManager bluetooth; do
+for u in sshd systemd-networkd systemd-resolved evergo-firstboot evergo-boot-marker NetworkManager bluetooth; do
     if [ -e "$R/usr/lib/systemd/system/$u.service" ] || [ -e "$R/lib/systemd/system/$u.service" ]; then
         ln -sf "/usr/lib/systemd/system/$u.service" \
             "$R/etc/systemd/system/multi-user.target.wants/$u.service" 2>/dev/null || \
@@ -463,10 +463,10 @@ if [ -e "$R/usr/lib/systemd/systemd" ]; then
     fi
 fi
 
-# Desktop edition: a normal user for GDM (it refuses root) and autologin, so the
-# phone boots straight into the session without a keyboard or on-screen password.
-if [ "$EDITION" = desktop ]; then
-    say "rootfs: desktop user + GDM autologin"
+# Desktop editions (GNOME or XFCE) need a normal user (both display managers
+# refuse root) and an autologin so the phone boots straight into the session.
+if [ "$EDITION" != minimal ]; then
+    say "rootfs: desktop user + $EDITION autologin"
     python3 - "$R" <<'PYDESK'
 import os, subprocess, sys, shutil
 
@@ -484,9 +484,8 @@ if 'evergo:' not in open(pw).read():
     if 'evergo:' not in open(group).read():
         open(group, 'a').write('evergo:x:1000:\n')
     want = ('sudo', 'audio', 'video', 'input', 'render', 'netdev', 'plugdev', 'bluetooth')
-    lines = open(group).read().splitlines()
     out = []
-    for line in lines:
+    for line in open(group).read().splitlines():
         f = line.split(':')
         if f[0] in want and len(f) >= 4:
             members = [m for m in f[3].split(',') if m]
@@ -510,11 +509,6 @@ if 'evergo:' not in open(pw).read():
             except OSError:
                 pass
 
-# GDM autologin
-os.makedirs(os.path.join(R, 'etc/gdm3'), exist_ok=True)
-open(os.path.join(R, 'etc/gdm3/custom.conf'), 'w').write(
-    '[daemon]\nAutomaticLoginEnable=True\nAutomaticLogin=evergo\n')
-
 # graphical target by default
 os.makedirs(os.path.join(R, 'etc/systemd/system'), exist_ok=True)
 for tgt in ('/usr/lib/systemd/system/graphical.target',
@@ -525,17 +519,41 @@ for tgt in ('/usr/lib/systemd/system/graphical.target',
             os.unlink(dst)
         os.symlink(tgt, dst)
         break
-for gdm in ('/usr/lib/systemd/system/gdm3.service',
-            '/lib/systemd/system/gdm3.service',
-            '/usr/lib/systemd/system/gdm.service'):
-    if os.path.exists(os.path.join(R, gdm.lstrip('/'))):
-        dst = os.path.join(R, 'etc/systemd/system/display-manager.service')
-        # gdm3's postinst may already have created this link
-        if os.path.lexists(dst):
-            os.unlink(dst)
-        os.symlink(gdm, dst)
-        break
 PYDESK
+
+    mkdir -p "$R/etc/systemd/system"
+    if [ "$EDITION" = desktop ]; then
+        # GNOME: gdm3 autologin
+        mkdir -p "$R/etc/gdm3"
+        printf '[daemon]\nAutomaticLoginEnable=True\nAutomaticLogin=evergo\n' \
+            > "$R/etc/gdm3/custom.conf"
+        for dm in /usr/lib/systemd/system/gdm3.service \
+                  /lib/systemd/system/gdm3.service \
+                  /usr/lib/systemd/system/gdm.service; do
+            if [ -e "$R$dm" ]; then
+                rm -f "$R/etc/systemd/system/display-manager.service"
+                ln -sfn "$dm" "$R/etc/systemd/system/display-manager.service"
+                break
+            fi
+        done
+    elif [ "$EDITION" = xfce ]; then
+        # XFCE: LightDM autologin into the xfce session
+        mkdir -p "$R/etc/lightdm"
+        cat > "$R/etc/lightdm/lightdm.conf" <<'LDM'
+[Seat:*]
+autologin-user=evergo
+autologin-user-timeout=0
+user-session=xfce
+LDM
+        for dm in /usr/lib/systemd/system/lightdm.service \
+                  /lib/systemd/system/lightdm.service; do
+            if [ -e "$R$dm" ]; then
+                rm -f "$R/etc/systemd/system/display-manager.service"
+                ln -sfn "$dm" "$R/etc/systemd/system/display-manager.service"
+                break
+            fi
+        done
+    fi
 fi
 
 say "rootfs: verify"
@@ -640,7 +658,7 @@ chmod 644 "$IR/gadget-setup.sh"
 
 cat > "$IR/init" <<'INIT'
 #!/bin/sh
-# Mount the Arch root filesystem from the eMMC user area, grow it to the whole user area
+# Mount the distribution root filesystem from the eMMC user area, grow it to the whole user area
 # on the first boot, and hand over.
 #
 #   eMMC user area : /dev/sdc (no partition nodes - the GPT is wiped)

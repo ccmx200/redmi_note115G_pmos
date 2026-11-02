@@ -131,25 +131,36 @@ AC
         systemctl enable ssh 2>/dev/null || systemctl enable sshd 2>/dev/null || true
         systemctl enable systemd-networkd 2>/dev/null || true
     '
-    if [ "${EVERGO_EDITION:-minimal}" = desktop ]; then
+    case "${EVERGO_EDITION:-minimal}" in
+    desktop|xfce)
         if [ "$KIND" != ubuntu ]; then
-            echo "  !! desktop edition is only implemented for ubuntu"; exit 1
+            echo "  !! the $EVERGO_EDITION edition is only implemented for ubuntu"; exit 1
         fi
-        log "desktop edition: GNOME + Chinese language/input"
-        chroot "$R" /usr/bin/qemu-aarch64-static /bin/sh -c '
+        if [ "$EVERGO_EDITION" = xfce ]; then
+            log "xfce edition: XFCE + LightDM + Chinese language/input"
+            PKGS="xfce4-panel xfwm4 xfdesktop4 xfce4-session xfce4-settings \
+                  xfce4-terminal thunar thunar-volman lightdm lightdm-gtk-greeter \
+                  dbus-x11 language-pack-zh-hans ibus-libpinyin fonts-noto-cjk"
+        else
+            log "desktop edition: GNOME + Chinese language/input"
+            PKGS="ubuntu-desktop-minimal gnome-terminal \
+                  xdg-desktop-portal xdg-desktop-portal-gnome \
+                  language-pack-zh-hans language-pack-gnome-zh-hans \
+                  ibus-libpinyin fonts-noto-cjk"
+        fi
+        chroot "$R" /usr/bin/qemu-aarch64-static /bin/sh -c "
             set -e
             export DEBIAN_FRONTEND=noninteractive
-            APT="apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
+            APT=\"apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold\"
             # the main install block above ends with apt-get clean + rm -rf
-            # /var/lib/apt/lists, so refresh the indexes before installing GNOME
+            # /var/lib/apt/lists, so refresh the indexes before installing the desktop
             apt-get update
-            $APT install --no-install-recommends \
-                ubuntu-desktop-minimal language-pack-zh-hans \
-                language-pack-gnome-zh-hans ibus-libpinyin
+            \$APT install --no-install-recommends $PKGS
             apt-get clean
             rm -rf /var/lib/apt/lists/*
-        '
-    fi
+        "
+        ;;
+    esac
     ;;
 fedora)
     rm -f "$R"/etc/yum.repos.d/*.repo

@@ -51,12 +51,31 @@ fastboot reboot
 
 > 💡 Windows 版 fastboot 处理不了 6 GiB 文件，见 **[教程](docs/TUTORIAL.md#windows-用户注意)**。
 
+### 桌面版 / 轻量桌面（可选）
+
+CI 的 `edition` 参数支持三种镜像：
+
+* `minimal`：最小系统（SSH + nmtui + WiFi + 触摸），最稳、最省内存；
+* `desktop`：Ubuntu GNOME（`ubuntu-desktop-minimal`，自动登录 `evergo/evergo`）；
+* `xfce`：**轻量桌面** XFCE + LightDM（内存占用明显低于 GNOME，适合这台内存不太稳的机器）。
+
+三者都带中文语言包/字体和 `zh_CN.UTF-8`。
+
 ### 桌面版（可选）
 
 CI 的 `edition=desktop` 会构建 **Ubuntu GNOME + 中文语言/输入法** 版本（`ubuntu-desktop-minimal`
 + `language-pack-zh-hans` + `fonts-noto-cjk` + `ibus-libpinyin`，自动创建 `evergo/evergo`
 用户并开 GDM 自动登录）。桌面 rootfs 约 10 GiB，**userdata 稀疏镜像超过 2 GiB，所以只放在
 workflow artifacts，不进 Release**；Release 里只有它的 `boot-*.img` 和小于 2 GiB 的镜像。
+
+### 屏幕面板与触摸
+
+* 这台机器有两种面板：**Tianma** (`k16a_36_02_0a_vdo`) 和 **CSOT** (`k16a_42_02_0b_vdo`)；
+  编译时用 `PANEL=` 选对应的（默认 Tianma）。
+* 触摸屏固件**按 DT 里的面板节点自动选择**（Tianma → `novatek_ts_fw.bin`，CSOT →
+  `novatek_ts_ct_fw.bin`，见 `config/patches/0003-novatek-touch-fw-by-panel.patch`）。
+  之前驱动把 CSOT 固件写死，在 Tianma 屏上会出现**右侧一条触控不灵**，就是这个原因。
+* 面板选错的表现：显示/触摸几何异常；刷机前确认机型面板（Tianma/CSOT），或分别试两个 `PANEL` 构建。
 
 ### 已知问题：高负载下的内存不稳定（重要）
 

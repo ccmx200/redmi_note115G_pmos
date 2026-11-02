@@ -38,7 +38,7 @@ on:
       edition:
         description: 'image edition (desktop = Ubuntu GNOME + zh_CN)'
         type: choice
-        options: [minimal, desktop, both]
+        options: [minimal, desktop, xfce, both, all]
         default: 'both'
         required: true
       panel:
@@ -88,12 +88,14 @@ jobs:
           case "$edition" in
             minimal) editions="minimal" ;;
             desktop) editions="desktop" ;;
+            xfce)    editions="xfce" ;;
+            all)     editions="minimal desktop xfce" ;;
             *)       editions="minimal desktop" ;;
           esac
           for e in $editions; do
             for d in $distros; do
-              # the desktop edition is Ubuntu GNOME only
-              [ "$e" = "desktop" ] && [ "$d" != "ubuntu" ] && continue
+              # the graphical editions are Ubuntu-only for now
+              [ "$e" != "minimal" ] && [ "$d" != "ubuntu" ] && continue
               for r in $rams; do add "$d" "$r" "$e"; done
             done
           done
@@ -191,7 +193,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.rootfs) }}
-    name: ${{ matrix.distro }}${{ matrix.edition == 'desktop' && ' (desktop)' || '' }} / ${{ matrix.ram }} GiB
+    name: ${{ matrix.distro }}${{ matrix.edition == 'desktop' && ' (gnome)' || '' }}${{ matrix.edition == 'xfce' && ' (xfce)' || '' }} / ${{ matrix.ram }} GiB
     steps:
       - uses: actions/checkout@v4
 
@@ -224,6 +226,7 @@ jobs:
           set -e
           rm=12288
           if [ "${{ matrix.edition }}" = minimal ]; then rm="$ROOTFS_MB"; fi
+          if [ "${{ matrix.edition }}" = xfce ]; then rm=8192; fi
           chmod +x build.sh scripts/*.sh
           sudo -E env "PATH=$PATH" "HOME=$HOME" \
             "DISTRO=${{ matrix.distro }}" \
@@ -237,7 +240,7 @@ jobs:
           set -e
           d="${{ matrix.distro }}"; r="${{ matrix.ram }}"; e="${{ matrix.edition }}"
           suffix="${d}-${r}gib"
-          [ "$e" = desktop ] && suffix="${d}-desktop-${r}gib"
+          [ "$e" != minimal ] && suffix="${d}-${e}-${r}gib"
           rm -rf stage dist && mkdir -p stage dist
           cp out/boot.img      "stage/boot-${suffix}.img"
           cp out/userdata.simg "stage/userdata-${suffix}.simg"
@@ -261,7 +264,7 @@ jobs:
       - name: upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: evergo-${{ matrix.distro }}${{ matrix.edition == 'desktop' && '-desktop' || '' }}-${{ matrix.ram }}gib
+          name: evergo-${{ matrix.distro }}${{ matrix.edition != 'minimal' && format('-{0}', matrix.edition) || '' }}-${{ matrix.ram }}gib
           path: stage/*
           retention-days: 14
 

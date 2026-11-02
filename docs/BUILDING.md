@@ -41,10 +41,12 @@ Fork 仓库 → **Actions** → 「build evergo images」→ **Run workflow**
 | `distro` | `arch` / `debian` / `ubuntu` / `fedora` / `all` | 构建哪些发行版 |
 | `ram_gib` | `6` / `8` / `all` | 内存变体 |
 | `panel` | `k16a_36_02_0a_vdo,lcm`（天马）/ `k16a_42_02_0b_vdo,lcm`（华星） | 屏幕型号 |
-| `edition` | `minimal` / `desktop` / `both` | `desktop` = Ubuntu GNOME（含中文语言/输入法），默认 both |
+| `edition` | `minimal` / `desktop` / `xfce` / `both` / `all` | `desktop`=GNOME，`xfce`=轻量 XFCE，`both`=minimal+desktop，`all`=三种都建 |
 | `rootfs_mb` | 默认 `6144`（desktop 固定 12288） | 根文件系统初始大小 |
 
-**桌面版（desktop）**：`ubuntu-desktop-minimal` + GNOME + 中文语言包、字体和 `ibus-libpinyin`；
+**桌面版（desktop）**：`ubuntu-desktop-minimal` + GNOME + 中文语言包、字体和 `ibus-libpinyin`；另装了 `gnome-terminal` 和 `xdg-desktop-portal`（否则 HTOP/文件/设置等桌面图标点了没反应）。
+
+**轻量版（xfce）**：XFCE + LightDM 自动登录，不需要 GNOME，内存和磁盘占用都小；适合内存不稳定的机器。
 镜像里会自动建 `evergo/evergo` 用户并开启 GDM 自动登录。桌面 rootfs 约 10 GiB，
 **userdata 稀疏镜像超过 2 GiB，因此只上传到 workflow artifacts，不进 Release**（Release 只放
 `boot-*.img` 和小于 2 GiB 的 userdata）。所有版本都带中文字体和 `zh_CN.UTF-8` locale。
@@ -480,3 +482,11 @@ CI 的 `build` job 会：
 
 `.github/workflows/build.yml` 的 `push.paths-ignore` 包含 `README.md`、`docs/**`、`*.md`，
 所以**只改文档的提交不会触发 CI 构建**；要发版请手动 Run workflow 或改代码提交。
+
+## 启动脚本与面板（2026-11）
+
+* rootfs overlay 现在是**发行版中立**的：`arch-boot-marker.service` 改成了
+  `evergo-boot-marker.service`，登录横幅从 `/etc/os-release` 读发行版名，不再写死
+  "Arch Linux ARM"；pacman 相关文件只在 arch 镜像里保留（其它发行版构建时删除）。
+* `config/patches/0003-novatek-touch-fw-by-panel.patch`：触摸固件按 DT 面板节点选择
+  （Tianma/CSOT），修掉 Tianma 屏右侧触控条失灵。patch 已核对可应用到 pinned kernel。
