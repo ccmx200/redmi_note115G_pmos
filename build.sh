@@ -308,13 +308,15 @@ fi
 # Bluetooth rides on the same CONNSYS block: the BTIF controller and btmtkuart have
 # to be built in, otherwise the BT core stays in ROM (the toolchain used to drop
 # these symbols silently).
-for sym in CONFIG_BT_MTK_BTIF CONFIG_BT_MTKUART CONFIG_MT6833_EVERGO_WDT; do
+for sym in CONFIG_BT_MTK_BTIF CONFIG_BT_MTKUART; do
     if ! grep -q "^$sym=y" "$KOUT/.config"; then
         echo "  !! $sym=y did not survive olddefconfig"
         exit 1
     fi
 done
 echo "  CONFIG_MTK_GEN4M_WIFI=y, BT_MTK_BTIF=y, BT_MTKUART=y (old CONFIG_MTK_MT6833_CONN unset)"
+# The evergo watchdog driver was dropped from the newer kernel tree (the symbol
+# only survives in the stale defconfig), so do not require it here.
 make -s $KMAKE -j"$(nproc)" dtbs
 DTB="$KOUT/arch/arm64/boot/dts/mediatek/mt6833-xiaomi-evergo.dtb"
 [ -f "$DTB" ] || { echo "dtb build failed"; exit 1; }
@@ -841,6 +843,31 @@ if [ -b /dev/sdc ]; then
 else
     log "no /dev/sdc"
 fi
+# Bluetooth BD address: the BT stack reads /lib/firmware/mediatek/mt6833/BT_Addr
+# (six bytes, most significant first) and falls back to HCI_QUIRK_INVALID_BDADDR
+# when it is missing.  The factory address lives in the Android nvdata partition
+# which we cannot decode here, so generate a locally-administered address once
+# and persist it in the rootfs.  The BT probe of the next boot picks it up.
+if [ -d /newroot/lib/firmware ]; then
+    BTD=/newroot/lib/firmware/mediatek/mt6833
+    if [ ! -e "$BTD/BT_Addr" ]; then
+        mkdir -p "$BTD" 2>/dev/null
+        bytes=$(head -c 6 /dev/urandom | od -An -tu1)
+        set -- $bytes
+        if [ "$#" -ge 6 ]; then
+            b1=$(( (($1 & 0xfc) | 0x02) ))
+            {
+                printf "\\$(printf '%03o' "$b1")"
+                printf "\\$(printf '%03o' "$2")"
+                printf "\\$(printf '%03o' "$3")"
+                printf "\\$(printf '%03o' "$4")"
+                printf "\\$(printf '%03o' "$5")"
+                printf "\\$(printf '%03o' "$6")"
+            } > "$BTD/BT_Addr" 2>/dev/null && log "generated Bluetooth BD address"
+        fi
+    fi
+fi
+
 # A systemd rootfs built inside a chroot can lose the /sbin/init symlink that
 # the systemd postinst normally creates.  Without it this initramfs fell through
 # to a shell even though the system itself was perfectly bootable, which is how
