@@ -536,6 +536,27 @@ PYDESK
                 break
             fi
         done
+    elif [ "$EDITION" = phosh ]; then
+        # Phosh is a Wayland session started by gdm; the requested session has to
+        # be recorded in AccountsService, otherwise gdm autologins into GNOME.
+        mkdir -p "$R/etc/gdm3" "$R/var/lib/AccountsService/users"
+        printf '[daemon]\nAutomaticLoginEnable=True\nAutomaticLogin=evergo\n' \
+            > "$R/etc/gdm3/custom.conf"
+        cat > "$R/var/lib/AccountsService/users/evergo" <<'ACCT'
+[User]
+Session=phosh
+XSession=phosh
+SystemAccount=false
+ACCT
+        for dm in /usr/lib/systemd/system/gdm3.service \
+                  /lib/systemd/system/gdm3.service \
+                  /usr/lib/systemd/system/gdm.service; do
+            if [ -e "$R$dm" ]; then
+                rm -f "$R/etc/systemd/system/display-manager.service"
+                ln -sfn "$dm" "$R/etc/systemd/system/display-manager.service"
+                break
+            fi
+        done
     elif [ "$EDITION" = xfce ]; then
         # XFCE: LightDM autologin into the xfce session
         mkdir -p "$R/etc/lightdm"

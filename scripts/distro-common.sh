@@ -132,11 +132,17 @@ AC
         systemctl enable systemd-networkd 2>/dev/null || true
     '
     case "${EVERGO_EDITION:-minimal}" in
-    desktop|xfce)
+    desktop|xfce|phosh)
         if [ "$KIND" != ubuntu ]; then
             echo "  !! the $EVERGO_EDITION edition is only implemented for ubuntu"; exit 1
         fi
-        if [ "$EVERGO_EDITION" = xfce ]; then
+        if [ "$EVERGO_EDITION" = phosh ]; then
+            log "phosh edition: touch-first mobile desktop (Wayland/phoc) + Chinese"
+            PKGS="gdm3 phosh phoc squeekboard phosh-mobile-settings \
+                  gnome-settings-daemon gnome-console gnome-text-editor nautilus \
+                  upower gnome-control-center \
+                  language-pack-zh-hans ibus-libpinyin fonts-noto-cjk"
+        elif [ "$EVERGO_EDITION" = xfce ]; then
             log "xfce edition: XFCE + LightDM + Chinese language/input"
             PKGS="xfce4-panel xfwm4 xfdesktop4 xfce4-session xfce4-settings \
                   xfce4-terminal thunar thunar-volman lightdm lightdm-gtk-greeter \

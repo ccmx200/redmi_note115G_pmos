@@ -38,7 +38,7 @@ on:
       edition:
         description: 'image edition (desktop = Ubuntu GNOME + zh_CN)'
         type: choice
-        options: [minimal, desktop, xfce, both, all]
+        options: [minimal, desktop, xfce, phosh, both, all]
         default: 'both'
         required: true
       panel:
@@ -89,7 +89,8 @@ jobs:
             minimal) editions="minimal" ;;
             desktop) editions="desktop" ;;
             xfce)    editions="xfce" ;;
-            all)     editions="minimal desktop xfce" ;;
+            phosh)   editions="phosh" ;;
+            all)     editions="minimal desktop xfce phosh" ;;
             *)       editions="minimal desktop" ;;
           esac
           for e in $editions; do
@@ -225,6 +226,7 @@ jobs:
           rm=12288
           if [ "${{ matrix.edition }}" = minimal ]; then rm="$ROOTFS_MB"; fi
           if [ "${{ matrix.edition }}" = xfce ]; then rm=8192; fi
+          if [ "${{ matrix.edition }}" = phosh ]; then rm=10240; fi
           chmod +x build.sh scripts/*.sh
           sudo -E env "PATH=$PATH" "HOME=$HOME" \
             "DISTRO=${{ matrix.distro }}" \

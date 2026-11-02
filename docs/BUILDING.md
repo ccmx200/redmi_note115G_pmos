@@ -41,7 +41,7 @@ Fork 仓库 → **Actions** → 「build evergo images」→ **Run workflow**
 | `distro` | `arch` / `debian` / `ubuntu` / `fedora` / `all` | 构建哪些发行版 |
 | `ram_gib` | `6` / `8` / `all` | 内存变体 |
 | `panel` | `k16a_36_02_0a_vdo,lcm`（天马）/ `k16a_42_02_0b_vdo,lcm`（华星） | 屏幕型号 |
-| `edition` | `minimal` / `desktop` / `xfce` / `both` / `all` | `desktop`=GNOME，`xfce`=轻量 XFCE，`both`=minimal+desktop，`all`=三种都建 |
+| `edition` | `minimal` / `desktop` / `xfce` / `phosh` / `both` / `all` | `desktop`=GNOME，`xfce`=轻量 XFCE，`phosh`=**手机专用触控桌面**，`both`=minimal+desktop，`all`=全建 |
 | `rootfs_mb` | 默认 `6144`（desktop 固定 12288） | 根文件系统初始大小 |
 
 **桌面版（desktop）**：`ubuntu-desktop-minimal` + GNOME + 中文语言包、字体和 `ibus-libpinyin`；另装了 `gnome-terminal` 和 `xdg-desktop-portal`（否则 HTOP/文件/设置等桌面图标点了没反应）。
@@ -507,3 +507,15 @@ EndSection
 mediatek-drm 是 platform device，不写 `kmsdev` 时 Xorg 的 modesetting 探测会失败，
 退回通用 fbdev 后报 `Cannot run in framebuffer mode. Please specify busIDs ...`，
 LightDM 因此起不来。写上 kmsdev 后 X server 正常启动（软件渲染，够 XFCE 用）。
+
+## Phosh：手机专用触控桌面（edition=phosh）
+
+XFCE 虽然流畅，但它的 UI 是桌面式的，触摸目标和交互不适合手机。`edition=phosh` 装的是
+**Phosh**（Purism 的手机 Wayland 桌面，phoc + squeekboard 虚拟键盘 + phosh-mobile-settings），
+配合 GNOME 后端组件，RAM/CPU 占用远低于完整 GNOME，而且交互是为触控和单手设计的：
+
+* 包：`gdm3 phosh phoc squeekboard phosh-mobile-settings gnome-settings-daemon
+  gnome-console gnome-text-editor nautilus upower gnome-control-center` + 中文包/字体/ibus；
+* gdm 自动登录 `evergo`，并在 `/var/lib/AccountsService/users/evergo` 里把
+  `Session=phosh` 写死（否则 gdm 会默认进 GNOME）；
+* rootfs 默认 10 GiB。
