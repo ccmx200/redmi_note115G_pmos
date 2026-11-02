@@ -490,3 +490,20 @@ CI 的 `build` job 会：
   "Arch Linux ARM"；pacman 相关文件只在 arch 镜像里保留（其它发行版构建时删除）。
 * `config/patches/0003-novatek-touch-fw-by-panel.patch`：触摸固件按 DT 面板节点选择
   （Tianma/CSOT），修掉 Tianma 屏右侧触控条失灵。patch 已核对可应用到 pinned kernel。
+
+## XFCE 的 X server 配置（2026-11）
+
+XFCE 版在 rootfs overlay 里带 `/etc/X11/xorg.conf.d/10-evergo.conf`：
+
+```
+Section "Device"
+    Identifier "evergo"
+    Driver "modesetting"
+    Option "kmsdev" "/dev/dri/card0"
+    Option "AccelMethod" "none"
+EndSection
+```
+
+mediatek-drm 是 platform device，不写 `kmsdev` 时 Xorg 的 modesetting 探测会失败，
+退回通用 fbdev 后报 `Cannot run in framebuffer mode. Please specify busIDs ...`，
+LightDM 因此起不来。写上 kmsdev 后 X server 正常启动（软件渲染，够 XFCE 用）。
