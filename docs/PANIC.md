@@ -147,3 +147,11 @@ boot job 之前用默认 `DISTRO=arch` 跑了一遍完整 rootfs，导致每次�
 Arch。现在 `KERNEL_ONLY=1` 会在 `rootfs` 段之前直接跳过所有发行版 rootfs，日志会出现
 `kernel-only build: distribution rootfs + userdata skipped`；CI run 50 的 `boot / 6 GiB`
 和 `boot / 8 GiB` 已验证不再编任何发行版。
+
+
+### build-51..53 的 4 GiB 上限是个意外（已在下一个提交撤回）
+
+`mem=4G` 原本只是本机稳定性实验，但它在修 gdm 符号链接的提交（5438501）里被
+`git add build.sh` 一起带进了仓库，于是 build-51/52/53 产出的所有镜像都被限制到
+3.8 GiB（`/proc/cmdline` 里有 `mem=4G`）。已撤回，镜像恢复 6 GiB；如果以后想再压内存，
+在 `build.sh` 的 BOOTARGS 里加回 `mem=4G` 即可（代价是可用 3.8 GiB）。
