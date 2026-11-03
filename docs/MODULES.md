@@ -8,7 +8,7 @@ tip = `50ca8781`。构建仓库 `build.sh` 的 `KERNEL_COMMIT` 已 pin 到该 co
 | 音频（扬声器/听筒/耳机/麦克风） | ✅ 真机可用 | `/proc/asound/cards` 有 `mt6833-mt6359`；`speaker-test`/用户实听有声音；扬声器播放时设备麦克风录音 RMS 从 ~309 升到 ~2655（8.6 倍） |
 | 震动（AW8697） | ✅ 真机可用（已由用户确认） | `aw8697 1-005a: detected AW869X chip id 0x97`；`/proc/bus/input/devices` 有 `aw8697-haptics`（event3，FF_RUMBLE/FF_PERIODIC）；`fftest` 上传并播放 sine/rumble 效果，用户实测能感觉到震动；VIBR LDO 需 3.3V（3.0V 时 AW8697 报 UVLO、电机不转）；驱动电平 96 + FF 下限 0x38，用户实测震动/扬声器/麦克风“全部正常” |
 | 充电/电量（MT6360 + MT6359 FG） | ✅ 可用 | `/sys/class/power_supply/battery`（capacity/status/current_now）、`mt6360-chg.4.auto`（online/status） |
-| 传感器 | ⚠️ 部分 | AK09918 磁力计（IIO `3-000c`，三轴 raw 有值）；TSL2522 环境光（IIO `tsl2522` 已注册）；LSM6DSO 加速度/陀螺仪由 SCP sensor hub 固件独占，AP 侧暂不可达 |
+| 传感器 | ⚠️ 部分 | AK09918 磁力计可用（IIO `3-000c`，旋转手机时三轴 raw 明显变化：x 65→283、y 798→1043、z 631→953）；TSL2522 环境光驱动能绑定、芯片 ID 0x5C、状态位 valid，但 ALS 两个通道始终读到 0（见下）；LSM6DSO 加速度/陀螺仪由 SCP sensor hub 固件独占，AP 侧暂不可达 |
 
 ## 音频
 
@@ -47,8 +47,15 @@ tip = `50ca8781`。构建仓库 `build.sh` 的 `KERNEL_COMMIT` 已 pin 到该 co
 
 ## 传感器
 
-* i2c1：AK09918 @0x0c（`ak8975` 驱动，IIO 三轴 raw 有值）、TSL2522 @0x39
-  （新 `drivers/iio/light/tsl2522.c`，连续 ALS，6 字节 FIFO）。
+* i2c1：AK09918 @0x0c（`ak8975` 驱动，IIO 三轴 raw 有值，用户旋转手机时
+  x/y/z 明显变化）、TSL2522 @0x39（新 `drivers/iio/light/tsl2522.c`，连续 ALS，
+  6 字节 FIFO）。
+* TSL2522 现状：驱动 probe、芯片 ID 0x5C、STATUS2 的 ALS_DATA_VALID 与
+  ALS_STATUS 都正常；按 Mikroe 参考序列（soft reset + WTIME + APERS + PON|AEN）
+  以及直接读 ALS_DATA0/1 寄存器、扫描 mod channel(0x40)/ALS_SCALE/TRIGGER_MODE
+  组合，两个通道仍恒为 0。判断是该模组的 photodiode/SMUX 需要 vendor sensor-hub
+  的 registry 配置（或模组在屏幕下方需要特定点亮时序），仅靠公开寄存器表无法
+  启用，自动亮度暂不可用。
 * LSM6DSO 不在任何 AP i2c 总线上（10 条总线都扫过），SCP 固件里有
   `lsm6dso_gyro`/`accGyro: spi error` 字符串，说明加速度计/陀螺仪由 SCP
   sensor hub 固件通过 SPI 独占，AP 侧要接管需要额外逆向 SPI 总线/CS 或实现
