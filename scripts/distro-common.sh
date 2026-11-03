@@ -118,7 +118,7 @@ AC
             nano vim-tiny htop rsync unzip file man-db \
             wpasupplicant iw dhcpcd-base wireless-regdb \
             network-manager bluez rfkill \
-            fonts-noto-cjk locales
+            fonts-noto-cjk locales alsa-utils alsa-ucm-conf
         $APT autoremove --purge
         apt-get clean
         rm -rf /var/lib/apt/lists/*
@@ -201,7 +201,7 @@ EOF
             htop rsync unzip file man-db \
             wpa_supplicant iw dhcpcd wireless-regdb \
             NetworkManager NetworkManager-tui bluez rfkill \
-            google-noto-sans-cjk-fonts glibc-langpack-zh || true
+            google-noto-sans-cjk-fonts glibc-langpack-zh alsa-utils alsa-ucm || true
         dnf -y clean all
         echo root:evergo | chpasswd
         echo evergo > /etc/hostname
