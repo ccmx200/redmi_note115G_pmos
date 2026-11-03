@@ -6,7 +6,7 @@ tip = `50ca8781`。构建仓库 `build.sh` 的 `KERNEL_COMMIT` 已 pin 到该 co
 | 模块 | 状态 | 关键证据 |
 |:---|:---|:---|
 | 音频（扬声器/听筒/耳机/麦克风） | ✅ 真机可用 | `/proc/asound/cards` 有 `mt6833-mt6359`；`speaker-test`/用户实听有声音；扬声器播放时设备麦克风录音 RMS 从 ~309 升到 ~2655（8.6 倍） |
-| 震动（AW8697） | ✅ 真机可用（已由用户确认） | `aw8697 1-005a: detected AW869X chip id 0x97`；`/proc/bus/input/devices` 有 `aw8697-haptics`（event3，FF_RUMBLE/FF_PERIODIC）；`fftest` 上传并播放 sine/rumble 效果，用户实测能感觉到震动；VIBR LDO 需 3.3V（3.0V 时 AW8697 报 UVLO、电机不转） |
+| 震动（AW8697） | ✅ 真机可用（已由用户确认） | `aw8697 1-005a: detected AW869X chip id 0x97`；`/proc/bus/input/devices` 有 `aw8697-haptics`（event3，FF_RUMBLE/FF_PERIODIC）；`fftest` 上传并播放 sine/rumble 效果，用户实测能感觉到震动；VIBR LDO 需 3.3V（3.0V 时 AW8697 报 UVLO、电机不转）；驱动电平 96 + FF 下限 0x38，用户实测震动/扬声器/麦克风“全部正常” |
 | 充电/电量（MT6360 + MT6359 FG） | ✅ 可用 | `/sys/class/power_supply/battery`（capacity/status/current_now）、`mt6360-chg.4.auto`（online/status） |
 | 传感器 | ⚠️ 部分 | AK09918 磁力计（IIO `3-000c`，三轴 raw 有值）；TSL2522 环境光（IIO `tsl2522` 已注册）；LSM6DSO 加速度/陀螺仪由 SCP sensor hub 固件独占，AP 侧暂不可达 |
 
@@ -72,8 +72,8 @@ cat /sys/bus/iio/devices/iio:device*/name
 1. 扬声器/听筒/耳机音质与音量曲线未做主观调校（SIA8109 OWI mode 6 来自 a22x 同
    芯片经验，evergo 未逐档验证）。
 2. 耳机插拔检测（MT6359 accdet）只注册了 jack，未做机械插拔实测。
-3. AW8697 的驱动电平沿用 vendor `vib_cont_drv_lev=53`；手动最大电平测试明显过强，
-   生产路径（FF 事件）强度正常，但没有做逐档强度校准。
+3. AW8697 的驱动电平改为 96（vendor 默认 53），FF 事件映射到 [0x38, 96]；用户
+   实测强度正常，但未做逐档（轻/中/重）强度校准。
 4. TSL2522 的 ALS raw 当前读到 0（FIFO 有数据但 4 个通道都是 0，已按 Mikroe
    参考实现配置；需要 datasheet 级别的测量序列/增益调试后再接入自动亮度）。
 5. LSM6DSO（加速度/陀螺）受 SCP 固件独占，未完成。
