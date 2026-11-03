@@ -554,3 +554,32 @@ panfrost fault 归零，滑动/应用/手势都流畅。若 GPU 仍异常，可�
   （6 字节，MSB first）读 BD 地址；Android 的出厂地址在 nvdata 里，主线暂时解不出。
   initramfs 在首次启动时生成一个 locally-administered 地址并持久化到 rootfs，
   **所以刷机后第一次启动 BT 无地址，重启一次后生效**。bluez 服务已默认启用。
+
+## 硬件按键（2026-11-03）
+
+* DTS 里加了 `mt6359-keys`（KEY_POWER + home key = KEY_VOLUMEDOWN）和
+  `keypad@10010000`（mt6779-keypad，音量上 KPCOL0/1，keymap 用 rows*cols 个
+  keycode，不是三元组）。
+* 配置 `CONFIG_KEYBOARD_MTK_PMIC=y` / `CONFIG_KEYBOARD_MT6779=y`。
+* 真机（SSH）验证：`/proc/bus/input/devices` 里出现
+  `mt6779-keypad`（event0）和 `mtk-pmic-keys`（event1），dmesg 无报错。
+  物理按键动作留给用户实测。
+
+## 音频/麦克风（下一步，参考已备好）
+
+当前镜像没有声卡。已从 **stock vendor DTB**（`config/vendor_dtb.bin`，用
+`dtc -I dtb -O dts` 解出）拿到 evergo 的真实音频布局：
+
+* `sound { compatible = "mediatek,mt6833-mt6359-sound"; }`
+* `mt6359_snd { compatible = "mediatek,mt6359-sound"; }`
+* `accdet`, `audio_sram@11212000`, `mtk-btcvsd-snd@18050000`
+* vendor 的 `mt6833-sound` 节点（AFE）以及音频 pinctrl 组
+
+以及 a22x-mainline 的同 SoC 音频补丁（AFE 用 mt8192 驱动 + 新增
+`clk-mt6833-audsys`、mt6359 codec/accdet、机器驱动、功放），已下载在
+`/root/a22x-audio/`。
+
+移植顺序：DTS（afe/sound/mt6359_snd/accdet/audio_sram/amp）→ 内核驱动补丁
+（mt8192-afe mt6833 compatible、audsys clk、machine driver）→ 配置 →
+rootfs ALSA UCM。之后再做传感器（ICM-40607/MMC5603/MN78911）、MT6360 充电/
+MT6359 fuel gauge、手电筒/震动/休眠。
