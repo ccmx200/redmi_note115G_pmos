@@ -117,8 +117,8 @@ AC
             iproute2 iputils-ping net-tools less procps kmod tzdata \
             nano vim-tiny htop rsync unzip file man-db \
             wpasupplicant iw dhcpcd-base wireless-regdb \
-            network-manager bluez rfkill \
-            fonts-noto-cjk locales alsa-utils alsa-ucm-conf
+            network-manager bluez bluez-obexd rfkill iio-sensor-proxy \
+            fonts-noto-cjk fonts-noto-color-emoji locales alsa-utils alsa-ucm-conf
         $APT autoremove --purge
         apt-get clean
         rm -rf /var/lib/apt/lists/*
@@ -141,14 +141,20 @@ AC
             PKGS="gdm3 phosh phoc squeekboard phosh-mobile-settings \
                   gnome-settings-daemon gnome-console gnome-text-editor nautilus \
                   upower gnome-control-center \
-                  language-pack-zh-hans ibus-libpinyin fonts-noto-cjk"
+                  epiphany-browser gnome-calculator gnome-clocks eog evince totem \
+                  file-roller gnome-screenshot gnome-characters gnome-disk-utility \
+                  gnome-contacts gnome-calendar dconf-cli \
+                  language-pack-zh-hans language-pack-gnome-zh-hans \
+                  language-pack-gnome-zh-hans-base ibus ibus-libpinyin \
+                  fonts-noto-cjk fonts-noto-color-emoji"
         elif [ "$EVERGO_EDITION" = xfce ]; then
             log "xfce edition: XFCE + LightDM + Chinese language/input"
             PKGS="xfce4-panel xfwm4 xfdesktop4 xfce4-session xfce4-settings \
                   xfce4-terminal thunar thunar-volman lightdm lightdm-gtk-greeter \
                   dbus-x11 xserver-xorg xserver-xorg-input-libinput \
                   xserver-xorg-video-fbdev xinit x11-xserver-utils \
-                  language-pack-zh-hans ibus-libpinyin fonts-noto-cjk"
+                  language-pack-zh-hans language-pack-gnome-zh-hans ibus-libpinyin \
+                  fonts-noto-cjk fonts-noto-color-emoji"
         else
             log "desktop edition: GNOME + Chinese language/input"
             PKGS="ubuntu-desktop-minimal gnome-terminal \

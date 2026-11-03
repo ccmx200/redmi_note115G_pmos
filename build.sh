@@ -34,7 +34,7 @@ KERNEL_BRANCH="${KERNEL_BRANCH:-master}"
 # btmtk_stp takes the per-unit BD address from
 # /lib/firmware/mediatek/mt6833/BT_Addr).  Pinning by SHA keeps builds reproducible
 # if the branch is rewritten.
-KERNEL_COMMIT="${KERNEL_COMMIT:-2d3737d2c2c9eb0b984136def84d9517af89fb95}"
+KERNEL_COMMIT="${KERNEL_COMMIT:-d08c206db6ef1a4ea7c665f8fac7692f067f716e}"
 KERNEL_SRC="${KERNEL_SRC:-}"             # reuse an existing checkout if set
 RAM_GIB="${RAM_GIB:-6}"                  # 4/6/8 GiB units exist
 PANEL="${PANEL:-k16a_36_02_0a_vdo,lcm}"  # Tianma; CSOT is k16a_42_02_0b_vdo,lcm
@@ -239,7 +239,7 @@ if 'gpu_opp_table' not in s:
 # a panic and a reboot loop, which was observed repeatedly on hardware.
 BOOTARGS = (
     "earlycon=mtk8250,0x11002000 console=evenring console=ttyS0,921600n8 "
-    "console=tty0 loglevel=4 printk.devkmsg=on clk_ignore_unused "
+    "console=tty0 loglevel=4 printk.devkmsg=on mem_sleep_default=s2idle clk_ignore_unused "
     "pd_ignore_unused regulator_ignore_unused panic=10 "
     "watchdog_thresh=30 initcall_blacklist=exynos4_pm_init_power_domain "
     # fbcon=nodefer is required: without it the kernel does not reach userspace on
