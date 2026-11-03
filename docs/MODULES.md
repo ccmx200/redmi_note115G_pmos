@@ -61,7 +61,14 @@
 
 ## 压力测试
 
-（结果见 `docs/STRESS.md`，测试进行中/完成后更新）
+见 `docs/STRESS.md`：CPU/内存/UFS/音频/震动/传感器/电源/背光/蓝牙连续压力 344 s，
+全程 SSH 在线，无 panic/Oops/OOM/文件系统错误。唯一稳定性问题是显示
+blank/unblank（电源键）的 DRM 提交超时，与负载无关。
+
+复现：用 `/dev/uinput` 注入 KEY_POWER，logind 记录按键后 mtk-drm 立刻报
+`flip_done timed out` / `commit wait timed out` / `failed to switch cmd mode`。
+曾在 `mtk_crtc_atomic_begin` 提前完成 CRTC 事件，结果 blank 提交直接卡死，
+31 s 后被硬件看门狗复位，已回退，该问题保留为 Known Issue。
 
 ## 刷机
 
