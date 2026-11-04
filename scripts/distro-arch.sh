@@ -5,31 +5,73 @@
 #
 # Moved out of build.sh so the multi-distro dispatch stays readable.  Everything Arch
 # specific lives here: the tarball, pacman keyring, Landlock workaround, mirrors.
+#
+# The tarball download is authenticated before it is extracted (see
+# scripts/verify-download.sh): Arch Linux ARM publishes an MD5 and, more
+# importantly, a detached GPG signature for the rolling tarball.  The signature
+# is verified against the Arch Linux ARM Build System key committed in
+# config/keys/archlinuxarm.asc, so a mirror cannot serve a different tarball
+# unnoticed.
 set -euo pipefail
 
 R="${1:?usage: distro-arch.sh <rootfs-dir>}"
 MIRROR_HOST="${MIRROR_HOST:-mirrors.ocf.berkeley.edu}"
 ARCH_TARBALL="${ARCH_TARBALL:-}"
 WORK="${WORK:-/tmp/evergo-work}"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+KEY="$HERE/../config/keys/archlinuxarm.asc"
 
 log() { printf '  %s\n' "$*"; }
+
+# shellcheck source=verify-download.sh
+. "$HERE/verify-download.sh"
 
 rm -rf "$R"
 mkdir -p "$R" "$WORK"
 
 # ---------------------------------------------------------------- tarball ----
+TARBALL_NAME="ArchLinuxARM-aarch64-latest.tar.gz"
+BASE_PRIMARY="https://$MIRROR_HOST/archlinuxarm/os"
+BASE_FALLBACK="https://mirrors.tuna.tsinghua.edu.cn/archlinuxarm/os"
+# Where the tarball (and its .md5/.sig) came from; used to verify a cached copy.
+TARBALL_BASE="$BASE_PRIMARY"
+
 if [ -n "$ARCH_TARBALL" ] && [ -f "$ARCH_TARBALL" ]; then
     log "reusing $ARCH_TARBALL"
 else
-    ARCH_TARBALL="$WORK/ArchLinuxARM-aarch64-latest.tar.gz"
+    ARCH_TARBALL="$WORK/$TARBALL_NAME"
     if [ ! -s "$ARCH_TARBALL" ]; then
         log "downloading the Arch Linux ARM tarball"
-        curl -fsSL -o "$ARCH_TARBALL" \
-            "https://$MIRROR_HOST/archlinuxarm/os/ArchLinuxARM-aarch64-latest.tar.gz" \
-        || curl -fsSL -o "$ARCH_TARBALL" \
-            "https://mirrors.tuna.tsinghua.edu.cn/archlinuxarm/os/ArchLinuxARM-aarch64-latest.tar.gz"
+        ok=0
+        for base in "$BASE_PRIMARY" "$BASE_FALLBACK"; do
+            log "  $base/$TARBALL_NAME"
+            if curl -fsSL --max-time 1800 -o "$ARCH_TARBALL" "$base/$TARBALL_NAME"; then
+                ok=1; TARBALL_BASE="$base"; break
+            fi
+            rm -f "$ARCH_TARBALL"
+        done
+        [ "$ok" = 1 ] || { echo "  !! cannot download the Arch Linux ARM tarball"; exit 1; }
+    else
+        log "reusing cached $TARBALL_NAME"
     fi
 fi
+
+# The rolling tarball has no SHA256 next to it; Arch ARM publishes an MD5 and a
+# detached signature.  Verify the MD5 first (cheap truncation/corruption check),
+# then the signature (authenticity).  When a mirror lacks the .sig the build
+# prints a warning and continues; EVERGO_VERIFY_DOWNLOADS=strict makes it fail.
+verify_md5 "$ARCH_TARBALL" "$TARBALL_BASE/$TARBALL_NAME.md5" "Arch Linux ARM tarball"
+# The signature URL may be on the mirror the tarball came from; fall back to the
+# other mirror when that one lacks it.
+if ! curl -fsSL --max-time 30 -o /dev/null "$TARBALL_BASE/$TARBALL_NAME.sig" 2>/dev/null; then
+    if curl -fsSL --max-time 30 -o /dev/null "$BASE_PRIMARY/$TARBALL_NAME.sig" 2>/dev/null; then
+        TARBALL_BASE="$BASE_PRIMARY"
+    elif curl -fsSL --max-time 30 -o /dev/null "$BASE_FALLBACK/$TARBALL_NAME.sig" 2>/dev/null; then
+        TARBALL_BASE="$BASE_FALLBACK"
+    fi
+fi
+verify_gpg_detached "$ARCH_TARBALL" "$TARBALL_BASE/$TARBALL_NAME.sig" "$KEY" "Arch Linux ARM tarball"
+
 log "extracting…"
 tar xzf "$ARCH_TARBALL" -C "$R" --numeric-owner 2>/dev/null || true
 log "extracted $(find "$R" -type f 2>/dev/null | wc -l) files"
@@ -123,7 +165,7 @@ rm -rf "$R"/usr/lib/modules/* \
        "$R"/usr/share/doc/* \
        "$R"/usr/share/i18n/* \
        "$R"/usr/share/gtk-doc \
-       "$R"/var/cache/* "$R"/var/lib/pacman/sync/* \\
+       "$R"/var/cache/* "$R"/var/lib/pacman/sync/* \
        "$R"/tmp/* 2>/dev/null || true
 mkdir -p "$R/usr/lib/modules" "$R/var/cache" "$R/var/lib/pacman/sync" "$R/tmp"
 chmod 1777 "$R/tmp"

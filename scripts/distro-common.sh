@@ -112,9 +112,14 @@ AC
         $APT full-upgrade
         # WiFi station mode (evergo-wifi) needs wpa_supplicant/iw/dhcpcd;
         # dhcpcd-base is the daemon package name on the Debian family.
+        # systemd-timesyncd is the network clock source: ubuntu-base ships no NTP
+        # client at all and the Debian minimbase has none either, so without this
+        # package the phone boots with whatever the (unreliable) RTC said.  The
+        # overlay then enables it and points it at good servers.
         $APT install --no-install-recommends \
             openssh-server e2fsprogs sudo curl wget ca-certificates \
             iproute2 iputils-ping net-tools less procps kmod tzdata \
+            systemd-timesyncd \
             nano vim-tiny htop rsync unzip file man-db \
             wpasupplicant iw dhcpcd-base wireless-regdb \
             network-manager bluez bluez-obexd rfkill iio-sensor-proxy \
@@ -130,6 +135,7 @@ AC
         echo evergo > /etc/hostname
         systemctl enable ssh 2>/dev/null || systemctl enable sshd 2>/dev/null || true
         systemctl enable systemd-networkd 2>/dev/null || true
+        systemctl enable systemd-timesyncd 2>/dev/null || true
     '
     case "${EVERGO_EDITION:-minimal}" in
     desktop|xfce|phosh)
@@ -257,5 +263,20 @@ case "$ROOT_HASH" in
     \$*\$*) log "OK   root password set" ;;
     *)      log "MISS root password"; FAIL=1 ;;
 esac
+# The network clock and the periodic trim are configured by the overlay, but the
+# tools themselves come from the packages: warn (do not fail) when a base image
+# stops shipping them, so the problem is visible in the build log.
+if [ -e "$R/usr/lib/systemd/system/systemd-timesyncd.service" ] || \
+   [ -e "$R/lib/systemd/system/systemd-timesyncd.service" ]; then
+    log "OK   systemd-timesyncd present"
+else
+    log "WARN systemd-timesyncd missing (no network clock source)"
+fi
+if [ -e "$R/usr/lib/systemd/system/fstrim.timer" ] || \
+   [ -e "$R/lib/systemd/system/fstrim.timer" ]; then
+    log "OK   fstrim.timer present"
+else
+    log "WARN fstrim.timer missing (no periodic SSD/eMMC trim)"
+fi
 [ "$FAIL" -eq 0 ] || { echo "    !! verification failed"; exit 1; }
 log "size: $(du -sh "$R" | cut -f1)"

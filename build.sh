@@ -34,7 +34,7 @@ KERNEL_BRANCH="${KERNEL_BRANCH:-master}"
 # btmtk_stp takes the per-unit BD address from
 # /lib/firmware/mediatek/mt6833/BT_Addr).  Pinning by SHA keeps builds reproducible
 # if the branch is rewritten.
-KERNEL_COMMIT="${KERNEL_COMMIT:-36427477a309ca0a0ef8fd18dfd54862b3dee148}"
+KERNEL_COMMIT="${KERNEL_COMMIT:-3d60ec401058c4a70516c6025e884816ed22a1bb}"
 KERNEL_SRC="${KERNEL_SRC:-}"             # reuse an existing checkout if set
 RAM_GIB="${RAM_GIB:-6}"                  # 4/6/8 GiB units exist
 PANEL="${PANEL:-k16a_36_02_0a_vdo,lcm}"  # Tianma; CSOT is k16a_42_02_0b_vdo,lcm
@@ -94,11 +94,10 @@ if [ "$(id -u)" != "0" ]; then
 fi
 
 say() { printf '\n\033[1;36m▶ %s\033[0m \033[2m%s\033[0m\n' "$*" "$(date +%H:%M:%S)"; }
-
 BUILD_T0=${SECONDS:-0}
-say "evergo build · 🐧 ${DISTRO} · ${EDITION} · ${RAM_GIB} GiB · panel ${PANEL%%,*}"
-
 ok()   { printf '  \033[1;32m✔\033[0m %s\n' "$*"; }
+
+say "evergo build · 🐧 ${DISTRO} · ${EDITION} · ${RAM_GIB} GiB · panel ${PANEL%%,*}"
 warn() { printf '  \033[1;33m▲\033[0m %s\n' "$*"; }
 
 # --------------------------------------------------------------- kernel -----
@@ -121,8 +120,11 @@ else
         if git -C "$L" fetch --depth 1 origin "$KERNEL_COMMIT" 2>/dev/null; then
             git -C "$L" checkout -q FETCH_HEAD
             echo "  using pinned commit $KERNEL_COMMIT"
-        else
-            echo "  !! could not fetch $KERNEL_COMMIT, falling back to a branch"
+        elif [ "${KERNEL_ALLOW_BRANCH_FALLBACK:-0}" = 1 ]; then
+            # Explicitly requested escape hatch.  This produces a kernel that was
+            # never validated on hardware, so it has to be opted into.
+            echo "  !! could not fetch the pinned commit $KERNEL_COMMIT"
+            echo "  !! KERNEL_ALLOW_BRANCH_FALLBACK=1: building a branch head instead (NOT reproducible)"
             rm -rf "$L"
             for b in "$KERNEL_BRANCH" main master; do
                 echo "  cloning branch $b"
@@ -132,6 +134,21 @@ else
                 fi
                 rm -rf "$L"
             done
+        else
+            # The pinned SHA is the tree that was booted on this handset: it carries
+            # the WMT/gen4m WiFi stack, the BTIF Bluetooth transport and the DTS the
+            # panel/touch/audio setup was verified with.  A "random" branch head can
+            # look fine and still boot without WiFi, so fail loudly instead of
+            # shipping that surprise.
+            echo "" >&2
+            echo "  !! could not fetch the pinned kernel commit:" >&2
+            echo "       repo   $KERNEL_REPO" >&2
+            echo "       commit $KERNEL_COMMIT" >&2
+            echo "     This build only ships the kernel tested on hardware; refusing to" >&2
+            echo "     silently build a different tree.  Fix the network/commit, point" >&2
+            echo "     KERNEL_SRC at a checkout of that commit, or - if you really want a" >&2
+            echo "     different tree - set KERNEL_ALLOW_BRANCH_FALLBACK=1." >&2
+            exit 1
         fi
         [ -d "$L/.git" ] || { echo "  !! could not get the kernel source"; exit 1; }
     else
@@ -627,6 +644,29 @@ test -x "$R/usr/local/bin/evergo-mode"        && echo "  evergo-mode ok"
 test -x "$R/usr/local/bin/evergo-first-login" && echo "  first-login ok"
 grep -q '^PubkeyAuthentication no' "$R/etc/ssh/sshd_config.d/10-bringup.conf" && echo "  sshd: password only"
 echo "  hostname: $(cat "$R/etc/hostname" 2>/dev/null)"
+# Clock / storage hygiene configured by the overlay.  These are warnings only: the
+# enablement symlinks are always in the overlay, but their unit targets come from
+# the distro (systemd-timesyncd is a separate package on Debian/Ubuntu), so a
+# missing unit must be visible in the build log without failing an otherwise fine
+# image.
+if [ -e "$R/etc/systemd/system/sysinit.target.wants/systemd-timesyncd.service" ] && \
+   { [ -e "$R/usr/lib/systemd/system/systemd-timesyncd.service" ] || \
+     [ -e "$R/lib/systemd/system/systemd-timesyncd.service" ]; }; then
+    echo "  NTP: systemd-timesyncd enabled"
+else
+    echo "  !! NTP: systemd-timesyncd is not enabled or not installed (no network clock)"
+fi
+if [ -e "$R/etc/systemd/system/timers.target.wants/fstrim.timer" ] && \
+   { [ -e "$R/usr/lib/systemd/system/fstrim.timer" ] || [ -e "$R/lib/systemd/system/fstrim.timer" ]; }; then
+    echo "  fstrim.timer enabled"
+else
+    echo "  !! fstrim.timer is not enabled (no periodic trim)"
+fi
+if grep -q '^[^#].*[[:space:]]/[[:space:]]*ext4[[:space:]].*noatime' "$R/etc/fstab" 2>/dev/null; then
+    echo "  / mounted with noatime (fstab)"
+else
+    echo "  !! /etc/fstab root entry has no noatime option"
+fi
 
 sync
 
@@ -812,7 +852,10 @@ if [ -b /dev/sdc ]; then
     losetup -o "$UD_OFF" /dev/loop0 /dev/sdc 2>/dev/null
     log "loop0=$(blockdev --getsize64 /dev/loop0 2>/dev/null)"
 
-    mount -t ext4 -o rw /dev/loop0 /newroot 2>/dev/null
+    # noatime from the very first mount: the rootfs is on eMMC and every atime
+    # update is a metadata write.  /etc/fstab also says noatime (systemd-remount-fs
+    # re-applies it once userspace is up); this closes the window before that.
+    mount -t ext4 -o rw,noatime /dev/loop0 /newroot 2>/dev/null
     MRC=$?
     log "mount rc=$MRC"
     if [ "$MRC" = "0" ] && [ ! -e /newroot/.evergo-grown ]; then
@@ -835,7 +878,7 @@ if [ -b /dev/sdc ]; then
         else
             log "resize2fs missing"
         fi
-        mount -t ext4 -o rw /dev/loop0 /newroot 2>/dev/null
+        mount -t ext4 -o rw,noatime /dev/loop0 /newroot 2>/dev/null
         log "remount rc=$?"
         if [ "$GREW" = 1 ]; then
             touch /newroot/.evergo-grown 2>/dev/null
