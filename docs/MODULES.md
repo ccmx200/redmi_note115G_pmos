@@ -13,7 +13,7 @@
 | 震动 AW8697 | ✅ | VIBR LDO 3.3 V、驱动电平 96、FF 映射下限 0x38；用户实测正常 |
 | 充电 MT6360 + 电量 MT6359 FG | ✅ | 用户实测充电正常；`/sys/class/power_supply/battery` |
 | 磁力计 AK09918 | ✅ | 旋转手机三轴 raw 明显变化（x 65→283 等） |
-| 环境光 TSL2522 | ⚠️ | 驱动绑定、ID 0x5C、状态位 valid，但 ALS 双通道恒 0；怀疑 vendor sensor-hub 的 photodiode/SMUX registry 配置，自动亮度暂不可用 |
+| 环境光 TSL2522 | ✅ | 从 stock `scp.img` 反出 vendor 的 `init_tsl2522` 序列（photodiode/SMUX 0xDC..0xDF、FIFO 配置、校准、阈值、时序），驱动按该序列初始化后 raw 值在室内光下约 220-270（之前恒 0）；自动亮度已有可用输入 |
 | 加速度/陀螺 LSM6DSO | ❌ | SCP sensor hub 固件通过 SPI 独占，AP 侧没有总线 |
 | 蓝牙 | ⚠️ | 配对可用；内核已补 `BT_RFCOMM/BNEP/HIDP/LE`（之前 OBEX/OPP/FTP profile 因 RFCOMM 缺失全部启动失败）。文件传输需配对后由对端发起，待最终回归 |
 | 电源键 | ⚠️ | 可按灭屏幕，按亮时 DRM commit（flip_done）超时导致黑屏；`mtk-pmic-keys` 已标记 wakeup，suspend 路径仍需修 |
