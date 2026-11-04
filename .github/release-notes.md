@@ -7,12 +7,13 @@ Redmi Note 11T 5G（`evergo` / `everpal`，联发科 MT6833）的 **mainline Lin
 
 ## 📦 本版本内容
 
-| 发行版 | 内存变体 | 文件 |
-|:---|:---:|:---|
-| 🟦 Arch Linux ARM | 6 GiB / 8 GiB | `boot-arch-6gib.img` · `userdata-arch-6gib.img.gz` |
-| 🟥 Debian 13 (trixie) | 6 GiB / 8 GiB | `boot-debian-6gib.img` · `userdata-debian-6gib.img.gz` |
-| 🟧 Ubuntu 26.04 LTS | 6 GiB / 8 GiB | `boot-ubuntu-6gib.img` · `userdata-ubuntu-6gib.img.gz` |
-| 🟪 Fedora | 6 GiB / 8 GiB | `boot-fedora-6gib.img` · `userdata-fedora-6gib.img.gz` |
+| 发行版 | 说明 |
+|:---|:---|
+| 🟩 Arch Linux ARM | `boot-arch-*.img` · `userdata-arch-*.simg` |
+| 🟥 Debian 13 (trixie) | `boot-debian-*.img` · `userdata-debian-*.simg` |
+| 🟧 Ubuntu 26.04 LTS | `boot-ubuntu-*.img` · `userdata-ubuntu-*.simg` |
+| 🟦 Fedora | `boot-fedora-*.img` · `userdata-fedora-*.simg` |
+| 🖥️ Ubuntu 桌面版 | `*-desktop-*`（GNOME / phosh / XFCE，附中文语言与输入法） |
 
 > 🧠 **内存变体只影响内核的设备树** —— 镜像里传给内核的内存大小必须和你的手机一致。
 > 4 GiB 机型请用 `6gib` 的版本（向下兼容），8 GiB 机型务必用 `8gib`。
@@ -24,42 +25,30 @@ Redmi Note 11T 5G（`evergo` / `everpal`，联发科 MT6833）的 **mainline Lin
 ## 🚀 刷入
 
 ```bash
-# 1. 解压根文件系统（6 GiB）
-gunzip userdata-arch-6gib.img.gz
+# 1. 刷引导（两个槽都刷，避免掉槽）
+fastboot -S 200M flash boot_a boot-ubuntu-6gib.img
+fastboot -S 200M flash boot_b boot-ubuntu-6gib.img
 
-# 2. 刷引导（两个槽都刷，避免掉槽）
-fastboot -S 200M flash boot_a boot-arch-6gib.img
-fastboot -S 200M flash boot_b boot-arch-6gib.img
+# 2. 刷根文件系统（必须加 -S，否则 fastboot 会因文件过大失败）
+fastboot -S 200M flash userdata userdata-ubuntu-6gib.simg
 
-# 3. 刷根文件系统（必须加 -S，否则 fastboot 会因文件过大失败）
-fastboot -S 200M flash userdata userdata-arch-6gib.img
-
-# 4. 重启
+# 3. 重启
 fastboot reboot
 ```
 
 <details>
 <summary>💡 <b>Windows 用户注意</b>（fastboot 会崩，点开看解决办法）</summary>
 
-Windows 版 `fastboot` 会把整个 6 GiB 镜像读进内存然后崩溃（`std::bad_alloc`）。两种办法：
+Windows 版 `fastboot` 会把整个镜像读进内存然后崩溃（`std::bad_alloc`）。用 `-S 200M`
+分片刷入即可；`.simg` 已经是稀疏镜像，直接刷。
 
-**方法一：流式刷入**
-```bash
-gunzip -c userdata-arch-6gib.img.gz | fastboot -S 200M flash userdata -
-```
-
-**方法二：先转稀疏镜像**（推荐，最快，6 GiB → 约 2.1 GB）
-```bash
-img2simg userdata-arch-6gib.img userdata.simg
-fastboot -S 200M flash userdata userdata.simg
-```
 </details>
 
 ---
 
 ## ⏳ 首次开机
 
-**首次开机约 10 分钟** —— 系统会自动把 6 GiB 的根分区扩展到整块 eMMC（约 106 GiB）：
+**首次开机约 1~10 分钟** —— 系统会自动把根分区扩展到整块 eMMC（约 106 GiB）：
 
 ```
 6 GiB  →  106 GiB     ← 全自动，之后每次开机都很快
@@ -87,22 +76,21 @@ ssh root@169.254.42.1          # 密码：evergo
 
 ### 首次登录向导
 
-第一次登录会自动进入彩色设置向导：
+第一次登录会自动进入 **彩色向导**（带 emoji 和加载动画）：
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│   🐧  evergo   ·   Arch Linux ARM   ·   首次登录设置          │
-│       Redmi Note 11T 5G  ·  MediaTek MT6833                  │
-└──────────────────────────────────────────────────────────────┘
+  ╭──────────────────────────────────────────────────────────╮
+  │  🟧 ✨ evergo 首次登录设置 ✨
+  │     Ubuntu 26.04 LTS  ·  Redmi Note 11T 5G  ·  MT6833
+  ╰──────────────────────────────────────────────────────────╯
 
-  [1/3]  用户账户
-  ──────────────────────────────────────────────────────────────
-  ?  创建普通用户？[Y/n]
-  ?  用户名 [evergo] :
-  ?  密码（输入时不显示）  :
+  ⠙ 正在检测系统环境… ✔
+  • 发行版：Ubuntu 26.04 LTS
+  • 包管理：apt update && apt upgrade
 
-  [2/3]  主机名
-  [3/3]  root 密码
+  [1/3] 👤 用户账户
+  [2/3] 🏠 主机名
+  [3/3] 🔑 root 密码
 ```
 
 可以全部跳过，直接使用 `root`。
@@ -116,9 +104,11 @@ ssh root@169.254.42.1          # 密码：evergo
 | `evergo-mode status` | 查看当前 USB 网络模式 |
 | `evergo-mode router` | DHCP 客户端（默认）—— 插路由器拿 IP |
 | `evergo-mode pc` | DHCP 服务端 —— 直连电脑自动拿 `192.168.42.x` |
-| `evergo-info` | 一屏系统概览 |
+| `evergo-info` | 一屏系统概览（内核/内存/温度/网络） |
+| `evergo-first-login --force` | 重新运行首次登录向导 |
 
-**国内源已预配置**：Arch 用清华 + 中科大，Debian/Ubuntu/Fedora 用清华，开箱即可 `pacman -S` / `apt install` / `dnf install`。
+**国内源已预配置**：Arch 用清华 + 中科大，Debian/Ubuntu/Fedora 用清华，开箱即可
+`pacman -S` / `apt install` / `dnf install`。
 
 ---
 
@@ -128,12 +118,25 @@ ssh root@169.254.42.1          # 密码：evergo
 |:---|:---:|
 | 主控 MT6833 / 天玑 810（8 核） | ✅ |
 | 存储 128 GB eMMC → 自动扩到 106 GiB | ✅ |
-| 显示（`mediatekdrmfb` 帧缓冲） | ✅ |
-| USB RNDIS 网络（高速模式，~4.5 MB/s） | ✅ |
-| SSH 密码登录 | ✅ |
+| 显示 K16A 90 Hz（天马 / CSOT） | ✅ |
+| 触摸 Novatek NT36672C | ✅ |
+| 声音（扬声器 / 耳机 / 麦克风） | ✅ |
+| 震动 AW8697 | ✅ |
+| 充电 MT6360 + 电量计 MT6359 | ✅ |
+| 环境光 TSL2522（自动亮度） | ✅ |
+| 磁力计 AK09918 | ✅ |
+| RTC 时间同步 | ✅ |
+| 电源键短按：关屏 / 亮屏（不休眠） | ✅ |
 | 硬件看门狗 | ✅ |
+| USB RNDIS 网络 + SSH | ✅ |
+| WiFi（WMT）+ 蓝牙（配对/传输/音频） | ✅ |
+| GPU：Mali-G57 / Panfrost（合成器使用） | ⚠️ |
+| 摄像头、基带/通话、指纹、NFC | ❌ |
+| 系统休眠（s2idle 能进能出，但亮屏恢复未完成） | 🚧 |
 
-**未完成**：PMIC、CPU 调频（cpufreq）、Wi-Fi / 蓝牙、基带、音频、相机、触摸固件、USB Host。
+> ⚠️ **GPU 说明**：vendor 的 GPU 电压/OPP 校准没进主线，浏览器等重负载下 panfrost
+> 可能报 `DATA_INVALID/TILE_RANGE` 错误并出现绿色花屏。浏览器已经默认改走软件渲染
+> （llvmpipe），合成器仍用 GPU，日常界面保持流畅。
 
 ---
 
@@ -141,11 +144,14 @@ ssh root@169.254.42.1          # 密码：evergo
 
 | 问题 | 修复 |
 |:---|:---|
-| 🐧 **开机看不到小企鹅** | 去掉 bootargs 里的 `fbcon=nodefer` —— 它让 fbcon 在 DSI 面板就绪前接管，企鹅被擦掉 |
-| 💤 **控制台刷屏 `sleep: not found`** | 改用 `busybox --install -s` 链接**全部** applet，不再靠手写列表 |
-| 🎨 向导简陋 | 重写：彩色、边框、分步、密码二次确认、`✔/✘` 状态 |
-| 💾 根分区只有 6 GiB | 首次开机自动 `resize2fs` 扩到 106 GiB |
-| 🔑 全新刷入登不进去 | 构建时设置 root 默认密码 `evergo` |
+| 🏷️ **Ubuntu 登录界面显示 “Arch Linux ARM”** | 登录横幅 / motd / 首次登录向导全部改为从 `/etc/os-release` 读取，按发行版显示正确的名称、logo 和包管理器 |
+| 🎨 **首次登录向导太朴素** | 重写：emoji、彩色边框、旋转加载动画、发行版检测、更友好的提示 |
+| 💡 **自动亮度偶发失效** | 电源键关屏会暂停自动亮度；开机 / 唤醒 / 登录时强制恢复 `ambient-enabled`，崩溃重启也不会再一直关着 |
+| 🟢 **浏览器使用中绿色花屏 + 重启** | 浏览器默认软件渲染（llvmpipe），合成器继续用 GPU；等 GPU 校准数据移植后再改回 |
+| ⏰ **时间 / RTC 错乱** | 新增 `evergo-rtc-sync`，开机和关机都同步 RTC |
+| 🖥️ **息屏后无法唤醒 / commit 超时** | 电源键改为背光开关 + 锁屏（不再走有问题的 DRM disable 路径） |
+| 🐧 **开机看不到小企鹅** | 去掉 `fbcon=nodefer` |
+| 🔑 **全新刷入登不进去** | 构建时设置 root 默认密码 `evergo` |
 
 ---
 

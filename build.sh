@@ -93,7 +93,13 @@ if [ "$(id -u)" != "0" ]; then
     exit 1
 fi
 
-say() { printf '\n\033[1;36m== %s\033[0m\n' "$*"; }
+say() { printf '\n\033[1;36m▶ %s\033[0m \033[2m%s\033[0m\n' "$*" "$(date +%H:%M:%S)"; }
+
+BUILD_T0=${SECONDS:-0}
+say "evergo build · 🐧 ${DISTRO} · ${EDITION} · ${RAM_GIB} GiB · panel ${PANEL%%,*}"
+
+ok()   { printf '  \033[1;32m✔\033[0m %s\n' "$*"; }
+warn() { printf '  \033[1;33m▲\033[0m %s\n' "$*"; }
 
 # --------------------------------------------------------------- kernel -----
 if [ -n "$BOOT_IMG" ]; then
@@ -383,7 +389,7 @@ echo "  handled by scripts/distro-$DISTRO.sh"
 
 say "rootfs: apply the evergo overlay"
 tar xzf "$HERE/rootfs-overlay.tar.gz" -C "$R" --numeric-owner
-chmod 755 "$R/usr/local/bin/evergo-mode" "$R/usr/local/bin/evergo-info" "$R/usr/local/bin/evergo-first-login" "$R/usr/local/bin/evergo-wifi" 2>/dev/null || true
+chmod 755 "$R"/usr/local/bin/* 2>/dev/null || true
 chmod 644 "$R/etc/profile.d/00-evergo-welcome.sh" "$R/etc/evergo/fastfetch.jsonc" 2>/dev/null || true
 
 # ------------------------------------------------- WiFi userspace + CONN -----
@@ -975,3 +981,10 @@ cat <<'MSG'
   configuration:
       ssh root@169.254.42.1        (password: evergo, then the first-login wizard)
 MSG
+
+say "done"
+printf '  🎉 build finished in %ss\n' "$((SECONDS-BUILD_T0))"
+for f in "$OUT"/boot.img "$OUT"/userdata.simg; do
+    [ -f "$f" ] && printf '  📦 %-24s %s bytes\n' "$(basename "$f")" "$(stat -c%s "$f")"
+done
+printf '  💾 %s\n' "$OUT"
