@@ -19,6 +19,7 @@
 | `6796f40a` | **fuel-gauge 改读 MT6360 ADC VBAT**（原来读 MT6359 阻抗通道，读出负电压） | ✅ |
 | `7480c0a7` | **fuel-gauge 电压单位修正**（uV 结果被再乘 1000 导致 int 溢出） | ✅ |
 | `1a91f097` | **电池 OCV 表单位修正**（整表原来放大了 10 倍） | ✅ |
+| `320373f5` | **CPU/GPU 温控降频**：passive cooling（80/90/100°C），critical 115°C | ✅ |
 
 `master` 当前 tip = **`1a91f097`**。
 
@@ -82,6 +83,17 @@ MT6360 白闪 LED 由内核 LED class 驱动暴露为 `/sys/class/leds/white:fla
 - `flash_fault`：过压/欠压状态（正常为空）。
 
 镜像内提供 `evergo-torch` 命令（`on [1-7]` / `off` / `toggle` / `strobe` / `status`），真机验证 1/3/7 档与 strobe 均正常，无 fault。
+
+## 温控与压力测试（本次新增）
+
+CPU/GPU DVFS 打开后，8 核满载可以一直维持 2.0 GHz；没有 cooling device 时温度会从 80°C 一路升到 102°C 然后整机挂死（已复现）。给 13 个热区加上 passive cooling 后：
+
+- CPU 小核/大核：80/90/100°C 三档降频（cpufreq cooling）；
+- GPU：80/90°C 两档降频（devfreq cooling）；
+- SOC 区：85/95°C；
+- critical trip 从 117°C 降到 115°C。
+
+真机 5 分钟 8 核满载结果：温度稳定在 **~81°C**，max_freq 逐步从 2.0 → 1.916 → 1.812 → 1.75 GHz，系统持续存活（uptime 连续），不再挂死。
 
 ## 验证计划（继续）
 
