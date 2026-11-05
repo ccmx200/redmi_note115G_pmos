@@ -19,8 +19,8 @@
 | 充电 / 电量 | ✅ | MT6360 充电 + MT6359 fuel gauge |
 | RTC | ✅ | MT6359 RTC；开机/关机与定时保存，时间不丢 |
 | 温度传感器 | ✅ | MT6833 LVTS：13 个热区（CPU/GPU/SOC/CONNSYS/MD），只读 |
-| CPU / GPU 调频 | 🚧 | 已移植、编译通过，**未上机验证**（内核分支 `dvfs-idle`）；当前固定频率 |
-| CPU idle（PSCI） | 🚧 | 已移植（含广播定时器），未上机，见 [KERNEL](KERNEL.md) |
+| CPU / GPU 调频 | 🚧 | 已在真机验证（内核分支 `dvfs`）：CPU 小核 950 MHz–2.0 GHz / 大核 725 MHz–2.0 GHz，GPU 390–880 MHz；但组合 DVFS 下 s2idle 仍有挂死问题，暂未进发布镜像 |
+| CPU idle（PSCI） | 🚧 | 实验分支 `cpuidle-exp`：状态生效但压力/休眠下会挂，未合并，见 [KERNEL](KERNEL.md) |
 | 休眠 s2idle | 🟡 | 可手动进/出，显示与触摸能恢复；默认不开自动休眠 |
 | 传感器 | 🟡 | AK09918 / TSL2522 / LSM6DSO 由 SCP RISC-V 传感器 hub 独占，主线无驱动 |
 | 基带 / SIM | ❌ | 无 CCCI/MDF 驱动，通话/短信/数据暂不支持 |
