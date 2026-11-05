@@ -161,6 +161,7 @@ ssh root@169.254.42.1          # 密码：evergo
 | 🐌 存储与 I/O | 根分区 noatime（initramfs + fstab）、fstrim.timer、zram 推荐 sysctl（swappiness=180, page-cluster=0） |
 | 📦 内核精简 | 关闭 DEBUG_INFO（vmlinux 减小约 61%，boot 负载不变），panic 栈符号保留 |
 | 🔐 构建可信 | 下载 ubuntu-base/Arch/Fedora 时校验 SHA256/GPG（Arch 公钥已入库），内核 pin 拉取失败直接报错，不再静默换树 |
+| 👆 息屏唤醒后触摸失灵 | Novatek 触摸驱动补上系统休眠/唤醒回调：suspend 深睡、resume 复位 TP_RST 并重新使能中断，唤醒后触摸立即可用 |
 
 ## 📚 更多
 

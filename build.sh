@@ -34,7 +34,7 @@ KERNEL_BRANCH="${KERNEL_BRANCH:-master}"
 # btmtk_stp takes the per-unit BD address from
 # /lib/firmware/mediatek/mt6833/BT_Addr).  Pinning by SHA keeps builds reproducible
 # if the branch is rewritten.
-KERNEL_COMMIT="${KERNEL_COMMIT:-3d60ec401058c4a70516c6025e884816ed22a1bb}"
+KERNEL_COMMIT="${KERNEL_COMMIT:-41739d2c2f0f026c4237759ab57d0d696a85a446}"
 KERNEL_SRC="${KERNEL_SRC:-}"             # reuse an existing checkout if set
 RAM_GIB="${RAM_GIB:-6}"                  # 4/6/8 GiB units exist
 PANEL="${PANEL:-k16a_36_02_0a_vdo,lcm}"  # Tianma; CSOT is k16a_42_02_0b_vdo,lcm
