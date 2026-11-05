@@ -1,87 +1,103 @@
 # 🐧 内核移植状态
 
-内核仓库：[`ccmx200/linux-evergo`](https://github.com/ccmx200/linux-evergo)（mainline 7.3.0-rc4 基线）
+内核仓库：[`ccmx200/linux-evergo`](https://github.com/ccmx200/linux-evergo)（mainline 7.3-rc4 基线）
 构建仓库通过 `KERNEL_COMMIT` pin 内核提交，见 [BUILDING](BUILDING.md)。
 
 ## 分支与提交
 
 ### `master` — 已上机验证（构建镜像 pin 这里）
 
-| 提交 | 内容 |
-|:---|:---|
-| `41739d2c` | **触摸休眠修复**：Novatek 驱动接入 `dev_pm_ops`，suspend 深睡、resume 复位 TP_RST 并重新使能中断 |
-| `3d60ec40` | **DRM 管线修复**：去掉 bring-up 的 OVL/RDMA 跳过、mutex SOF 覆盖和 DSI 关屏死等，恢复 OVL frame-done 中断流；息屏/休眠 resume 后屏幕自动恢复 |
-| `4835f9b8` | **LVTS 温控**：`mediatek,mt6833-lvts` 驱动 + 13 个只读热区 |
-
-`master` 是发布镜像使用的、经过上机验证的提交。
-
-### `dvfs` — 已上机验证大部分，未合 master
-
-| 提交 | 内容 | 验证 |
+| 提交 | 内容 | 状态 |
 |:---|:---|:---|
-| `c8c1ead7` | **CPU DVFS**（mediatek-cpufreq + mcusys mux/OPP/供电） | ✅ 小核 950 MHz–2.0 GHz、大核 725 MHz–2.0 GHz；8 核满载 2.0 GHz；降频/升频、s2idle 后都正常 |
-| `76dc0b9d` | **GPU DVFS**（Panfrost 390–880 MHz，固定 0.78125 V / VSRAM 0.85 V） | ✅ devfreq 生效；频率随 OpenGL ES 负载线性变化；880 MHz 连续满载 20 s 无故障 |
-| `d1536c41` | **LVTS critical trips + 休眠上下文恢复** | ✅ 9 个热区 117 °C trip；s2idle 后温度仍合理 |
+| `4835f9b8` | **LVTS 温控**：`mediatek,mt6833-lvts` + 13 个只读热区 | ✅ |
+| `3d60ec40` | **DRM 管线修复**：恢复 OVL frame-done 中断流，息屏/休眠 resume 后屏幕自动恢复 | ✅ |
+| `41739d2c` | **触摸休眠修复**：Novatek 驱动接入 `dev_pm_ops` | ✅ |
+| `c8c1ead7` | **CPU DVFS**（mediatek-cpufreq + mcusys mux/OPP/供电路轨） | ✅ |
+| `76dc0b9d` | **GPU DVFS**（Panfrost 390–880 MHz，固定 0.78125 V / VSRAM 0.85 V） | ✅ |
+| `d1536c41` | **LVTS critical trips + 休眠上下文恢复** | ✅ |
+| `88aa1fd0` | **MT6360 ADC 通道绑定头**（给 fuel-gauge 引用 VBAT 通道用） | ✅ |
+| `6796f40a` | **fuel-gauge 改读 MT6360 ADC VBAT**（原来读 MT6359 阻抗通道，读出负电压） | ✅ |
+| `7480c0a7` | **fuel-gauge 电压单位修正**（uV 结果被再乘 1000 导致 int 溢出） | ✅ |
+| `1a91f097` | **电池 OCV 表单位修正**（整表原来放大了 10 倍） | ✅ |
 
-> ⚠️ 已知问题：**CPU DVFS + GPU DVFS 同时启用时，s2idle resume 可能硬挂**（一次测试中挂死后强制断电把 userdata 的 ext4 journal 写坏，已重刷恢复）。在定位/压测通过前，`dvfs` 分支不进入发布镜像。
+`master` 当前 tip = **`1a91f097`**。
 
 ### `cpuidle-exp` — 实验分支，不要合并
 
-`b68469a6`：PSCI CPU idle states（cpuoff/clusteroff + 广播定时器 `timer@10017000`）。
+PSCI CPU idle states（cpuoff/clusteroff + 广播定时器 `timer@10017000`）。状态确实生效（`psci_idle`，usage/time 增长），但与 DVFS 组合后压力测试/休眠时会硬挂，并造成过 userdata 文件系统损坏。仅保留在分支，等挂死原因定位后再考虑。
 
-- 状态生效：`current_driver=psci_idle`，`cpuoff_l`/`clusteroff_l` 的 usage/time 都在增长；
-- 但与 DVFS 组合后，压力测试/休眠时可能硬挂，并造成过 userdata 损坏 → 仅保留在分支，等挂死原因定位后再考虑。
+## 已验证的关键结论
 
-## CPU DVFS 说明
+### CPU DVFS
 
-MT6833 的 CPU DVFS 由 MCUPM（RISC-V RV33 TinySys 固件）主导，AP 侧不能直接改 ARMPLL/电压；主线 `mediatek-cpufreq-hw` 的 LUT 方案在该 SoC 上读出乱码（曾出现 3.9 GHz），已放弃。
+- 驱动 `mtk-cpufreq`，governor `schedutil`
+- 小核簇 950 MHz – 2.0 GHz；大核簇 725 MHz – 2.0 GHz
+  - 大核不上 2.203 GHz：那是 A22x 逐片 EEM 校准值，主线读不到 EEM 表
+  - 小核下限 950 MHz：CCI 与 Vproc2 共享、CCI DVFS 未移植
+- 8 核满载可到 2.0 GHz；降频/升频、s2idle 后都正常
 
-`dvfs` 分支改用 A22x（同 MT6833）的经典 **`mediatek-cpufreq` + mcusys mux + MT6359 供电路轨**，绕开 MCUPM IPI：
+### GPU DVFS
 
-- 小核簇：950 MHz – 2.0 GHz（与 Vproc2/CCI 共享，下限 950 MHz 保安全）
-- 大核簇：725 MHz – 2.0 GHz（A22x 的 2.203 GHz 是逐片 EEM 校准值，主线读不到 EEM，不冒险加）
-
-上机验证命令：
-
-```bash
-cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_available_frequencies
-cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_driver      # mtk-cpufreq
-cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor    # schedutil
-```
-
-## GPU DVFS 与 OpenGL ES 基准
-
-GPU 频率/电压表从 stock `boot.img` 的 vendor DTB 和 vendor 内核源码（`gpufreq_v1/mt6833`）中提取：955 MHz 官方电压就是 0.78125 V，与主线固定电压一致，因此 955 MHz 重启不是欠压，而是 MFG PLL/posdiv 问题 → 已从 OPP 表移除，**上限 880 MHz**。
-
-用 headless EGL pbuffer + GLES2 的 GPU-bound 基准（全屏 1024×1024、64 次 ALU 循环的 fragment shader，Mesa 26.0.8 / Panfrost）：
+- `/sys/class/devfreq/13000000.gpu`，`simple_ondemand`，390–880 MHz
+- 955 MHz 会重启（vendor 表同为 0.78125 V，说明是 MFG PLL/posdiv 问题而非欠压）→ 已从 OPP 表移除
+- GPU-bound OpenGL ES 基准（EGL pbuffer + 全屏 fragment shader，Mali-G57 MC2/Panfrost）：
 
 | GPU 频率 | fps |
 |:---:|:---:|
-| 390 MHz（旧固定值） | 9.5 |
+| 390 MHz | 9.5 |
 | 545 MHz | 13.3 |
 | 622 MHz | 15.2 |
 | 700 MHz | 17.0 |
 | 880 MHz | 21.3 |
 
-880/390 = 2.26 倍频率，实测 2.24 倍 fps，说明 DVFS 确实生效；880 MHz 连续满载 20 s 正常（21.3 fps）。
+### 休眠
 
-## 验证计划（等稳定性问题修复后）
+CPU+GPU DVFS 同时启用时 **s2idle 进出正常**（已验证：suspend_stats success=1，resume 后显示/触摸/cpufreq/GPU devfreq 都恢复）。之前的挂死是 PSCI CPU idle 造成的，跟 DVFS 无关。
 
-1. `cpuidle-exp` 之外，先在 `dvfs` 分支上复测：CPU 满载 30 min、GPU 满载 5 min、两者混合、s2idle 进出 ×20、重启 ×10；
-2. 定位 CPU+GPU DVFS 组合下 s2idle resume 挂死（优先怀疑 GPU PM / PLL 恢复顺序）；
-3. 通过后 `dvfs` 合入 `master`，构建仓库 pin 更新，发布带调频的镜像；
-4. PSCI idle 另外单独压测，稳定后再合入。
+### 电池 / 充电（本次修复）
+
+修复前：
+
+```
+POWER_SUPPLY_VOLTAGE_NOW=-1329350976   (负电压)
+charge_now=892 uAh  on 5000 mAh pack
+capacity=0
+```
+
+根因与修复：
+
+1. fuel-gauge 的 `io-channels` 指向 MT6359 AUXADC 的阻抗通道（`MT6359_AUXADC_VBAT`），该通道的 IIO scale 不是 uV/LSB，读出来是垃圾；
+2. 改为读 MT6360 充电 ADC 的真实 VBAT 通道（`in_voltage4_scale=1250`，uV/LSB）；
+3. 驱动里对已经是 uV 的结果又乘了 1000，int 溢出变成负电压 → 删掉多余乘法；
+4. DTS 里电池 OCV 表所有电压值放大了 10 倍（44150000 = 44.15 V）→ 整表除以 10。
+
+修复后真机：`voltage_now=4287500 uV`、`capacity=85 %`、`charge_now=4255435 uAh`、`current_now=279541 uA`（充电中）。
+
+### 手电筒
+
+MT6360 白闪 LED 由内核 LED class 驱动暴露为 `/sys/class/leds/white:flash-1`：
+
+- `brightness` 1–7：手电筒亮度档位；
+- `flash_strobe`：相机闪光脉冲；
+- `flash_fault`：过压/欠压状态（正常为空）。
+
+镜像内提供 `evergo-torch` 命令（`on [1-7]` / `off` / `toggle` / `strobe` / `status`），真机验证 1/3/7 档与 strobe 均正常，无 fault。
+
+## 验证计划（继续）
+
+1. `cpuidle-exp` 的挂死定位（优先怀疑 PSCI 状态与 CPU PLL/CCI 恢复顺序）；
+2. DVFS 长稳：CPU 满载 30 min、GPU 满载 5 min、混合负载、s2idle ×20、重启 ×10；
+3. 摄像头/基带按 [CAMERA-MODEM](CAMERA-MODEM.md) 的结论暂缓。
 
 ## 已知限制与风险
 
 | 项 | 说明 |
 |:---|:---|
-| 大核上限 2.0 GHz | 2.203 GHz 是 A22x 逐片 EEM 校准值，主线读不到 EEM |
-| 小核下限 950 MHz | CCI 与 Vproc2 共享、CCI DVFS 未移植 |
-| GPU 上限 880 MHz | 955 MHz 会重启（PLL/posdiv 问题，与电压无关） |
+| 大核上限 2.0 GHz | 2.203 GHz 是逐片 EEM 校准值 |
+| GPU 上限 880 MHz | 955 MHz 会重启（PLL/posdiv） |
 | 117 °C trip | 基于未校准的 LVTS golden temp，仅作最后保护 |
-| 组合 DVFS + s2idle | 已知会挂，未进发布镜像 |
-| MCUPM / SCP / SSPM | 均为 RISC-V TinySys，主线无驱动；传感器 hub、modem 卡在这里 |
+| PSCI idle | 实验分支，不稳定 |
+| MCUPM / SCP / SSPM | RISC-V TinySys，无主线驱动；传感器 hub、modem 卡在这里 |
 | 内存压力 panic | 见 [PANIC](PANIC.md) |
 
 ## 抓内核崩溃日志（无串口）
@@ -89,7 +105,7 @@ GPU 频率/电压表从 stock `boot.img` 的 vendor DTB 和 vendor 内核源码�
 SSH 失联超过 60 秒按 panic 处理，重新开机后：
 
 ```bash
-ls /sys/fs/pstore/            # console-ramoops-0 / dmesg-ramoops-0
+ls /sys/fs/pstore/
 cat /sys/fs/pstore/console-ramoops-0
 ```
 
@@ -97,6 +113,6 @@ cat /sys/fs/pstore/console-ramoops-0
 
 ## 提交规范
 
-- 一个子系统一个提交，提交信息写"为什么"和"上机验证了什么"；未验证的改动明确标注并放在分支上。
+- 一个功能一个提交，提交信息写"为什么"和"上机验证了什么"；未验证的改动明确标注并放在分支上。
 - 不提交调试打印/死代码；发布镜像只 pin 已上机验证的 `master`。
 - DTS 变更按 board/SoC 分开，方便其他 MT6833 机型复用。

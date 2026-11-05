@@ -20,6 +20,7 @@
 | [KERNEL.md](KERNEL.md) | 内核仓库结构、已合入提交、DVFS/idle 分支与验证计划 |
 | [MODULES.md](MODULES.md) | 各子系统（显示/触摸/WiFi/BT/音频/充电/传感器）的驱动与设备树 |
 | [STRESS.md](STRESS.md) | 压力测试项目与历史结果 |
+| [CAMERA-MODEM.md](CAMERA-MODEM.md) | 摄像头/基带的硬件现状、阻塞点与工作量分析 |
 | [VENDOR-PORT.md](VENDOR-PORT.md) | 从 vendor 镜像/DTB 提取的信息摘要 |
 
 ## 变更记录

@@ -16,15 +16,16 @@
 | SSH | ✅ | 密码登录（root/evergo），首次登录有配置向导 |
 | 音频 | ✅ | MT6833 AFE + MT6359 codec + AW8697 功放；麦克风/耳机 |
 | 振动 | ✅ | AW8697 |
-| 充电 / 电量 | ✅ | MT6360 充电 + MT6359 fuel gauge |
+| 充电 / 电量 | ✅ | MT6360 充电 + MT6359 库仑计；VBAT 改读 MT6360 ADC 并修正 OCV 表后，电压/容量/charge_now 均正确（详见 [KERNEL](KERNEL.md)） |
+| 手电筒 / 闪光灯 | ✅ | MT6360 白闪 LED（`/sys/class/leds/white:flash-1`）；镜像内 `evergo-torch on/off/toggle/strobe/status` 可用 |
 | RTC | ✅ | MT6359 RTC；开机/关机与定时保存，时间不丢 |
 | 温度传感器 | ✅ | MT6833 LVTS：13 个热区（CPU/GPU/SOC/CONNSYS/MD），只读 |
-| CPU / GPU 调频 | 🚧 | 已在真机验证（内核分支 `dvfs`）：CPU 小核 950 MHz–2.0 GHz / 大核 725 MHz–2.0 GHz，GPU 390–880 MHz；但组合 DVFS 下 s2idle 仍有挂死问题，暂未进发布镜像 |
+| CPU / GPU 调频 | ✅ | 已合入内核 `master`：CPU 小核 950 MHz–2.0 GHz / 大核 725 MHz–2.0 GHz，GPU 390–880 MHz；s2idle 已验证正常 |
 | CPU idle（PSCI） | 🚧 | 实验分支 `cpuidle-exp`：状态生效但压力/休眠下会挂，未合并，见 [KERNEL](KERNEL.md) |
-| 休眠 s2idle | 🟡 | 可手动进/出，显示与触摸能恢复；默认不开自动休眠 |
+| 休眠 s2idle | 🟡 | 已验证可进/出（DVFS 同时启用也正常），resume 后显示/触摸/调频恢复；默认不自动休眠 |
 | 传感器 | 🟡 | AK09918 / TSL2522 / LSM6DSO 由 SCP RISC-V 传感器 hub 独占，主线无驱动 |
-| 基带 / SIM | ❌ | 无 CCCI/MDF 驱动，通话/短信/数据暂不支持 |
-| 相机 | ❌ | 无 ISP/相机驱动 |
+| 基带 / SIM | ❌ | 无 CCCI/MDF 驱动，通话/短信/数据暂不支持，见 [CAMERA-MODEM](CAMERA-MODEM.md) |
+| 相机 | ❌ | sensor 驱动有，但无 camsys ISP/seninf 平台驱动，见 [CAMERA-MODEM](CAMERA-MODEM.md) |
 | NFC | ❌ | 本机无 NFC 硬件 |
 
 ## 面板与触摸
