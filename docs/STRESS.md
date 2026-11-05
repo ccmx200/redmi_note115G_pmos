@@ -61,3 +61,19 @@ EOF
 python3 /tmp/pwr.py
 dmesg | grep -E 'flip_done|commit wait|cmd mode'
 ```
+
+
+## 2026-11 自动化结果（内核 320373f5 + thermal cooling）
+
+在最小 Ubuntu 镜像、内核 `320373f5`（CPU/GPU DVFS + 电池修复 + 温控降频，未启用 PSCI idle）上自动执行：
+
+| 测试 | 结果 |
+|:---|:---|
+| 8 核 CPU 满载 5 分钟 | 温度稳定 **~81°C**（未加 cooling 前升到 102°C 后挂死）；cpufreq max_freq 自动 2.0 → 1.916 → 1.812 → 1.75 GHz；uptime 连续、无 panic |
+| s2idle 进/出 ×3 | `suspend_stats success=3 fail=0`；每次 resume 后 dpms=On、cpufreq/GPU devfreq 正常 |
+| 重启 ×3 | 每次都能在 60 s 内重新 SSH；battery/cpufreq/devfreq/thermal 服务自动恢复 |
+| 电池读数 | `voltage_now=4.26–4.30 V`、`capacity=83–86 %`、`charge_now≈4.25 Ah`，与充电电流一致 |
+| 手电筒 | `/sys/class/leds/white:flash-1` 亮度 1/3/7 与 flash_strobe 均正常，`flash_fault` 为空 |
+| GPU 880 MHz 持续负载 | 在带 Mesa 的镜像上跑 21.3 fps、20 s 无故障；最小镜像没有 libEGL，无法跑该基准（需要 `mesa-utils`） |
+
+已知未测试/遗留：PSCI CPU idle（`cpuidle-exp`，会挂死）、摄像头/基带（见 [CAMERA-MODEM](CAMERA-MODEM.md)）。
