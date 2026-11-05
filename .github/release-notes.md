@@ -161,6 +161,7 @@ ssh root@169.254.42.1          # 密码：evergo
 | 🐌 存储与 I/O | 根分区 noatime（initramfs + fstab）、fstrim.timer、zram 推荐 sysctl（swappiness=180, page-cluster=0） |
 | 📦 内核精简 | 关闭 DEBUG_INFO（vmlinux 减小约 61%，boot 负载不变），panic 栈符号保留 |
 | 🔐 构建可信 | 下载 ubuntu-base/Arch/Fedora 时校验 SHA256/GPG（Arch 公钥已入库），内核 pin 拉取失败直接报错，不再静默换树 |
+| 🌡️ **满载过热挂死** | 新增 CPU/GPU 温控降频：80/90/100°C 逐级降频、critical 115°C；5 分钟 8 核满载温度稳定在 ~81°C，不再挂死 |
 | 🔋 **电池电压/容量错误** | fuel-gauge 原来读 MT6359 阻抗通道（负电压）、电压单位又溢出、OCV 表放大 10 倍；改读 MT6360 ADC VBAT 并修正单位/表后，电压、百分比、charge_now 都正确 |
 | 🔦 **手电筒/闪光灯** | MT6360 白闪 LED 已可用；新增 `evergo-torch on/off/toggle/strobe/status`（真机验证 1–7 档与相机闪光，无 fault） |
 | ⚡ **CPU/GPU 调频** | CPU DVFS（小核 950 MHz–2 GHz / 大核 725 MHz–2 GHz）和 GPU DVFS（390–880 MHz）已合入内核，s2idle 同时启用也正常 |
