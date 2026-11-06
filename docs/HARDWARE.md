@@ -86,3 +86,19 @@
 | USB Type-C / PD | 🟡 待真机验证 | MT6360 TCPC 节点已补（GPIO9 = PD_IRQB，sink PDO 5 V / 9 V）；PD 充电器实测前无法确认协商结果 |
 | Snap | ✅ | Ubuntu/Debian 镜像预装并启用 `snapd`，首次开机即可 `snap install snap-store`（squashfs xz/zstd 已支持） |
 | 型号信息 | ✅ | DT `model = "Xiaomi Redmi Note 11 5G"`、`compatible = "xiaomi,evergo"`、`chassis-type = "handset"` |
+
+## 性能调优（构建时生效）
+
+| 调整 | 原因 |
+|:---|:---|
+| zram 改用 `lz4` | A55/A76 上 zstd 压缩/解压明显更慢；lz4 降低 swap 延迟和 CPU 占用 |
+| `vm.swappiness=100`、`page-cluster=0`、`watermark_boost_factor=0` | zram 是随机访问的快速 swap，积极换出匿名页比保留它们更划算 |
+| `vm.dirty_background_ratio=5`、`dirty_ratio=15` | 避免大文件写入时一次回写过多，UFS 上会卡桌面数秒 |
+| `vm.vfs_cache_pressure=50` | 内存紧张时多保留 dentry/inode 缓存 |
+| UFS 调度器设为 `none`、`read_ahead_kb=128` | UFS 自带深队列，mq-deadline 只增加开销 |
+| 温控 passive 阈值 80/90/100 → 85/95/105 °C | 原先 80 °C 就开始降频，持续负载只能跑 ~1.75 GHz；提高后能维持更高频率（critical 仍 115 °C） |
+
+对应的文件：`rootfs-overlay.tar.gz` 里的 `/etc/sysctl.d/95-evergo-performance.conf`、
+`/etc/udev/rules.d/60-evergo-ufs.rules`、`/usr/local/bin/evergo-swapfile`，
+以及内核 `ee6cb578`（温控 trip）。
+
