@@ -34,7 +34,7 @@ KERNEL_BRANCH="${KERNEL_BRANCH:-master}"
 # btmtk_stp takes the per-unit BD address from
 # /lib/firmware/mediatek/mt6833/BT_Addr).  Pinning by SHA keeps builds reproducible
 # if the branch is rewritten.
-KERNEL_COMMIT="${KERNEL_COMMIT:-12717b45a5b596e4272a4613bde2d737b060bbdb}"
+KERNEL_COMMIT="${KERNEL_COMMIT:-f3db29244177c0d3025b525ca3cd8bc048a403a0}"
 KERNEL_SRC="${KERNEL_SRC:-}"             # reuse an existing checkout if set
 RAM_GIB="${RAM_GIB:-6}"                  # 4/6/8 GiB units exist
 PANEL="${PANEL:-k16a_36_02_0a_vdo,lcm}"  # Tianma; CSOT is k16a_42_02_0b_vdo,lcm
@@ -316,6 +316,12 @@ fi
 say "build dtb + kernel"
 cd "$L"
 make -s $KMAKE olddefconfig
+say "config: snap (squashfs decompressors)"
+for opt in SQUASHFS_XZ SQUASHFS_ZSTD SQUASHFS_LZ4 SQUASHFS_LZO; do
+    grep -q "^CONFIG_$opt=y" "$KOUT/.config" || {
+        echo "  !! CONFIG_$opt missing from evergo.config"; exit 1; }
+    echo "  CONFIG_$opt=y"
+done
 # The WiFi driver is a bool gated on CFG80211/ARCH_MEDIATEK/OF; make olddefconfig
 # silently drops it if any of those is not set, which would give a boot.img without
 # WiFi.  Fail loudly instead of shipping that.
