@@ -161,6 +161,7 @@ ssh root@169.254.42.1          # 密码：evergo
 | 🐌 存储与 I/O | 根分区 noatime（initramfs + fstab）、fstrim.timer、zram 推荐 sysctl（swappiness=180, page-cluster=0） |
 | 📦 内核精简 | 关闭 DEBUG_INFO（vmlinux 减小约 61%，boot 负载不变），panic 栈符号保留 |
 | 🔐 构建可信 | 下载 ubuntu-base/Arch/Fedora 时校验 SHA256/GPG（Arch 公钥已入库），内核 pin 拉取失败直接报错，不再静默换树 |
+| 🖥️ **桌面版** | 改用完整的 `apt install ubuntu-desktop`（GNOME 全套应用 + 中文输入法/字体），并排除 snap 版 firefox/thunderbird |
 | 🧠 **内存压力随机 panic** | 根因是内嵌 DTB 丢掉了 LK 启动时保留的基带/SCP/RKP 等 mblock，Linux 把固件内存当空闲内存用；内核 12717b45 补全 LK mblock 保留后，4.2 GiB 内存压力测试 0 坏页 |
 | 🌡️ **满载过热挂死** | 新增 CPU/GPU 温控降频：80/90/100°C 逐级降频、critical 115°C；5 分钟 8 核满载温度稳定在 ~81°C，不再挂死 |
 | 🔋 **电池电压/容量错误** | fuel-gauge 原来读 MT6359 阻抗通道（负电压）、电压单位又溢出、OCV 表放大 10 倍；改读 MT6360 ADC VBAT 并修正单位/表后，电压、百分比、charge_now 都正确 |

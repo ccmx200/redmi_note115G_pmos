@@ -137,6 +137,7 @@ AC
         systemctl enable systemd-networkd 2>/dev/null || true
         systemctl enable systemd-timesyncd 2>/dev/null || true
     '
+    DESKTOP_APT_FLAGS="--no-install-recommends"
     case "${EVERGO_EDITION:-minimal}" in
     desktop|xfce|phosh)
         if [ "$KIND" != ubuntu ]; then
@@ -162,11 +163,21 @@ AC
                   language-pack-zh-hans language-pack-gnome-zh-hans ibus-libpinyin \
                   fonts-noto-cjk fonts-noto-color-emoji"
         else
-            log "desktop edition: GNOME + Chinese language/input"
-            PKGS="ubuntu-desktop-minimal gnome-terminal \
-                  xdg-desktop-portal xdg-desktop-portal-gnome \
+            # The full "apt install ubuntu-desktop" experience: keep recommends so
+            # the GNOME application set comes in, but pin out the snap-only
+            # packages (snapd cannot work in a chroot and is not wanted on the
+            # image; firefox/thunderbird are snap transition packages).
+            log "desktop edition: full Ubuntu GNOME (ubuntu-desktop) + Chinese"
+            PKGS="ubuntu-desktop \
                   language-pack-zh-hans language-pack-gnome-zh-hans \
-                  ibus-libpinyin fonts-noto-cjk"
+                  ibus ibus-libpinyin fonts-noto-cjk fonts-noto-color-emoji"
+            DESKTOP_APT_FLAGS=""
+            mkdir -p "$R/etc/apt/preferences.d"
+            cat > "$R/etc/apt/preferences.d/99-evergo-no-snap" <<'PREF'
+Package: firefox thunderbird
+Pin: release *
+Pin-Priority: -1
+PREF
         fi
         chroot "$R" /usr/bin/qemu-aarch64-static /bin/sh -c "
             set -e
@@ -175,7 +186,7 @@ AC
             # the main install block above ends with apt-get clean + rm -rf
             # /var/lib/apt/lists, so refresh the indexes before installing the desktop
             apt-get update
-            \$APT install --no-install-recommends $PKGS
+            \$APT install $DESKTOP_APT_FLAGS $PKGS
             apt-get clean
             rm -rf /var/lib/apt/lists/*
         "
