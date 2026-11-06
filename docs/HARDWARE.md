@@ -77,3 +77,12 @@
 4. **蓝牙不可用** — 地址问题未解决。
 5. **面板必须选对** — 见上表。
 6. **无基带/相机/NFC** — 需要长期驱动工作。
+
+## 虚拟化、Type-C/PD、Snap 与品牌信息
+
+| 项目 | 状态 | 说明 |
+|:---|:---:|:---|
+| 虚拟化 | ✅ | KVM 已启用并通过硬件检测（EL2/VHE，`/dev/kvm`、`vhost-net`）；装 `qemu-system-arm`/libvirt 即可跑 aarch64 虚拟机 |
+| USB Type-C / PD | 🟡 待真机验证 | MT6360 TCPC 节点已补（GPIO9 = PD_IRQB，sink PDO 5 V / 9 V）；PD 充电器实测前无法确认协商结果 |
+| Snap | ✅ | Ubuntu/Debian 镜像预装并启用 `snapd`，首次开机即可 `snap install snap-store`（squashfs xz/zstd 已支持） |
+| 型号信息 | ✅ | DT `model = "Xiaomi Redmi Note 11 5G"`、`compatible = "xiaomi,evergo"`、`chassis-type = "handset"` |

@@ -157,6 +157,7 @@ nmcli device wifi list
 |:---|:---|
 | 📖 **[刷机与使用教程](docs/TUTORIAL.md)** | 下载、刷机、联网、首次登录、包管理、模式切换 |
 | 🖥️ **[桌面版镜像](docs/BUILDING.md)** | CI 可选 `edition=desktop`：完整 `ubuntu-desktop`（GNOME 全套应用 + 中文，Snap 可用） |
+| 🔌 **[硬件支持清单](docs/HARDWARE.md)** | 各硬件/虚拟化/PD/Snap 的支持状态与验证结果 |
 | 🛠️ **[构建指南](docs/BUILDING.md)** | 本地构建、CI、多发行版脚本、内核配置 |
 | 🩺 **[抓 panic 日志](docs/PANIC.md)** | 无串口时从 expdb 取回崩溃 trace |
 | 🕳️ **[踩坑记录](docs/TROUBLESHOOTING.md)** | 按症状查：启动失败、不扩容、连不上、构建报错 |

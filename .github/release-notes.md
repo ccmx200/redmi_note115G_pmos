@@ -165,6 +165,9 @@ ssh root@169.254.42.1          # 密码：evergo
 | 🧩 **Snap 安装失败（bad superblock）** | 内核补上 squashfs 的 XZ/ZSTD/LZ4/LZO 解压，`snap install snap-store` 等现在可以正常挂载安装 |
 | 🔊 **音量键反向** | 修正 PMIC home-key/键盘矩阵映射，音量加、减方向正确 |
 | 🧮 **CPU 显示成 6 核** | cpu-map 合并为一个 MC 域，lscpu/系统监视器显示 8 物理核 + 8 逻辑核，`capacity-dmips-mhz` 仍标记 cpu6/cpu7 为大核 |
+| 📦 **Snap 预装** | Ubuntu/Debian 镜像预装并启用 snapd，首次开机即可 `snap install snap-store`；squashfs XZ/ZSTD/LZ4/LZO 已开启 |
+| 🔌 **USB PD** | 补上 MT6360 TCPC 节点（GPIO9 = PD_IRQB，5 V/9 V sink PDO），Type-C/PD 协商启用（PD 充电器实测待验证） |
+| 🖥️ **虚拟化** | KVM 已启用（EL2/VHE、`/dev/kvm`、vhost-net），可跑 qemu/libvirt 虚拟机 |
 | 🧠 **内存压力随机 panic** | 根因是内嵌 DTB 丢掉了 LK 启动时保留的基带/SCP/RKP 等 mblock，Linux 把固件内存当空闲内存用；内核 12717b45 补全 LK mblock 保留后，4.2 GiB 内存压力测试 0 坏页 |
 | 🌡️ **满载过热挂死** | 新增 CPU/GPU 温控降频：80/90/100°C 逐级降频、critical 115°C；5 分钟 8 核满载温度稳定在 ~81°C，不再挂死 |
 | 🔋 **电池电压/容量错误** | fuel-gauge 原来读 MT6359 阻抗通道（负电压）、电压单位又溢出、OCV 表放大 10 倍；改读 MT6360 ADC VBAT 并修正单位/表后，电压、百分比、charge_now 都正确 |
