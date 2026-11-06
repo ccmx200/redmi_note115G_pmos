@@ -77,3 +77,15 @@ dmesg | grep -E 'flip_done|commit wait|cmd mode'
 | GPU 880 MHz 持续负载 | 在带 Mesa 的镜像上跑 21.3 fps、20 s 无故障；最小镜像没有 libEGL，无法跑该基准（需要 `mesa-utils`） |
 
 已知未测试/遗留：PSCI CPU idle（`cpuidle-exp`，会挂死）、摄像头/基带（见 [CAMERA-MODEM](CAMERA-MODEM.md)）。
+
+
+## 2026-11：内存压力测试（mblock 修复后）
+
+修复内核 12717b45（补全 LK 启动时保留的基带/SCP/SPM/RKP mblock）后复测：
+
+| 测试 | 修复前 | 修复后 |
+|:---|:---|:---|
+| 4.2 GiB 匿内存写入/读回（memtest4.py，pagemap 校验） | 47,308 页坏，物理 0x6c000000–0xb52ff000（正好是基带 mblock） | **0 坏页** |
+| 4.5 GiB 同上 | 未测（>4 GiB 必现） | **0 坏页** |
+| 90 秒 8 核满载 + s2idle 进出 | 可能挂死 | 通过，温控稳定 ~81°C |
+| 长时间运行 | 数小时必挂 | 同一内核连续运行 6 小时，无 panic |
