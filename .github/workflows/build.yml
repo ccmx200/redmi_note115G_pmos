@@ -9,8 +9,8 @@ name: build evergo images
 # (static download) and e2fsck/resize2fs for the first-boot grow, so it uses a small
 # Alpine minirootfs + e2fsprogs.  Every distro job then reuses the boot.img artifact.
 #
-# Editions: "minimal" (the current images) and "desktop" (Ubuntu GNOME with Chinese
-# language/input support).  Desktop root filesystems are much bigger than 2 GiB, which
+# Editions: "minimal" (the current images) and "desktop" (full ubuntu-desktop, GNOME +
+# Chinese, snap-ready support).  Desktop root filesystems are much bigger than 2 GiB, which
 # is the per-asset limit of a GitHub release; those userdata images are therefore only
 # attached to the workflow run artifacts and skipped in the release.
 
@@ -36,7 +36,7 @@ on:
         default: 'all'
         required: true
       edition:
-        description: 'image edition (desktop = Ubuntu GNOME + zh_CN)'
+        description: 'image edition (desktop = full ubuntu-desktop GNOME + zh_CN, snap-ready)'
         type: choice
         options: [minimal, desktop, xfce, phosh, both, all]
         default: 'both'
@@ -166,6 +166,16 @@ jobs:
             "RAM_GIB=${{ matrix.ram }}" \
             "PANEL=$PANEL" ./build.sh
 
+      - name: verify snap (squashfs) support in the kernel config
+        run: |
+          set -e
+          cfg=$(find out -name .config -path '*kernel*' | head -1)
+          [ -n "$cfg" ] || cfg=$(find out -name .config | head -1)
+          for opt in SQUASHFS_XZ SQUASHFS_ZSTD SQUASHFS_LZ4 SQUASHFS_LZO; do
+            grep -q "^CONFIG_$opt=y" "$cfg" || { echo "missing CONFIG_$opt in $cfg"; exit 1; }
+            echo "CONFIG_$opt=y"
+          done
+
       - name: ccache stats
         if: always()
         run: ccache -s || sudo ccache -s || true
@@ -189,7 +199,7 @@ jobs:
   distro:
     needs: [plan, boot]
     runs-on: ubuntu-24.04
-    timeout-minutes: 240
+    timeout-minutes: 300
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.rootfs) }}

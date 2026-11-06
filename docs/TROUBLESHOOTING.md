@@ -248,8 +248,6 @@ CONFIG_USB_ETH is not set     # 关掉 g_ether，腾出唯一的 UDC
 
 ### 为什么不做 cpufreq
 
-> 2026-11：CPU DVFS 已从 A22x 移植（内核分支 `dvfs-idle`，提交 `88b66aca`），编译通过但尚未上机验证；验证通过后会合入 `master`。下面是当初不做调频的原因，仅作背景保留。
-
 即使做了也没用 —— **CPU 只有 63% 占用**，瓶颈在 USB 控制器。所以**本项目明确不做**：
 
 1. 实测证明 CPU 有余量，调频不会提速
@@ -598,3 +596,32 @@ fastboot -S 200M flash userdata userdata.simg
 遇到这里没写的问题，欢迎提 Issue 并附上**屏幕照片**和 `dmesg`。
 
 </div>
+
+## snap 安装报错 “cannot mount squashfs image … bad superblock”
+
+这是内核缺 squashfs 解压算法，不是镜像坏了。`snapd` 下载的 snap 用 xz/zstd 压缩，
+如果内核只开了 `CONFIG_SQUASHFS_ZLIB`，`snap install` 会在挂载阶段失败，`dmesg` 里能看到：
+
+```
+Filesystem uses "zstd" compression. This is not supported
+```
+
+修复（构建镜像时）是在 `config/evergo.config` 里打开：
+
+```
+CONFIG_SQUASHFS_ZLIB=y
+CONFIG_SQUASHFS_XZ=y
+CONFIG_SQUASHFS_ZSTD=y
+CONFIG_SQUASHFS_LZ4=y
+CONFIG_SQUASHFS_LZO=y
+```
+
+然后重新构建内核。`build.sh` 会在 `make olddefconfig` 之后检查这几项，缺了直接报错退出；
+CI 的 boot job 也会在构建完成后校验，防止再退回只有 ZLIB 的配置。
+验证：
+
+```bash
+mount -t squashfs -o loop test-xz.sq /mnt && echo ok
+snap install snap-store
+```
+

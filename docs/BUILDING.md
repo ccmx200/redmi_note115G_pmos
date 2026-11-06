@@ -41,10 +41,10 @@ Fork 仓库 → **Actions** → 「build evergo images」→ **Run workflow**
 | `distro` | `arch` / `debian` / `ubuntu` / `fedora` / `all` | 构建哪些发行版 |
 | `ram_gib` | `6` / `8` / `all` | 内存变体 |
 | `panel` | `k16a_36_02_0a_vdo,lcm`（天马）/ `k16a_42_02_0b_vdo,lcm`（华星） | 屏幕型号 |
-| `edition` | `minimal` / `desktop` / `xfce` / `phosh` / `both` / `all` | `desktop`=GNOME，`xfce`=轻量 XFCE，`phosh`=**手机专用触控桌面**，`both`=minimal+desktop，`all`=全建 |
+| `edition` | `minimal` / `desktop` / `xfce` / `phosh` / `both` / `all` | `desktop`=完整 `ubuntu-desktop`（GNOME 全套应用，Snap 可用），`xfce`=轻量 XFCE，`phosh`=**手机专用触控桌面**，`both`=minimal+desktop，`all`=全建 |
 | `rootfs_mb` | 默认 `6144`（desktop 固定 12288） | 根文件系统初始大小 |
 
-**桌面版（desktop）**：`ubuntu-desktop-minimal` + GNOME + 中文语言包、字体和 `ibus-libpinyin`；另装了 `gnome-terminal` 和 `xdg-desktop-portal`（否则 HTOP/文件/设置等桌面图标点了没反应）。
+**桌面版（desktop）**：完整的 `apt install ubuntu-desktop`（保留 recommends，含 GNOME 全套应用：Nautilus、终端、设置中心、LibreOffice 等）+ 中文语言包、字体和 `ibus-libpinyin`。构建时用 apt pin 排除 snap 版 `firefox`/`thunderbird`（chroot 里 snapd 无法工作），镜像本身支持 snap。
 
 **轻量版（xfce）**：XFCE + LightDM 自动登录，不需要 GNOME，内存和磁盘占用都小；适合内存不稳定的机器。
 镜像里会自动建 `evergo/evergo` 用户并开启 GDM 自动登录。桌面 rootfs 约 10 GiB，
@@ -458,12 +458,15 @@ CI 的 `build` job 会：
 ## 桌面版与中文
 
 * `edition=minimal`：现有最小镜像（SSH + nmtui + WiFi + 触摸），默认 6144 MiB rootfs。
-* `edition=desktop`：Ubuntu GNOME。`build.sh` 里 `EDITION=desktop` 会自动把 rootfs 提到
+* `edition=desktop`：完整 Ubuntu 桌面。`build.sh` 里 `EDITION=desktop` 会自动把 rootfs 提到
   12288 MiB，并在镜像里创建 `evergo/evergo` 用户、开 GDM 自动登录、默认 `graphical.target`；
-  `scripts/distro-common.sh` 额外安装 `ubuntu-desktop-minimal`、`language-pack-zh-hans`、
+  `scripts/distro-common.sh` 安装 `ubuntu-desktop`（带 recommends）、`language-pack-zh-hans`、
   `language-pack-gnome-zh-hans`、`ibus-libpinyin`。
 * **所有发行版**都加了中文字体（`fonts-noto-cjk` / `noto-fonts-cjk` /
   `google-noto-sans-cjk-fonts`）和 `zh_CN.UTF-8` locale。
+* **Snap 支持**：内核配置启用 `CONFIG_SQUASHFS_ZLIB/XZ/ZSTD/LZ4/LZO`，并保留 `BLK_DEV_LOOP`、
+  `CONFIG_SECCOMP`，`snap`/`snapd` 可以直接挂载并安装 snap（`snap install snap-store` 已验证）。
+  之前只开了 ZLIB，xz/zstd 压缩的 snap 会报 “cannot mount squashfs image … bad superblock”。
 * 桌面 userdata 稀疏镜像超过 GitHub Release 的 **2 GiB/asset** 限制：workflow 会把大镜像
   只上传到 run artifacts，Release 里只放 `boot-*.img`（和 <2 GiB 的小镜像），并打
   `::warning::`。要拿桌面镜像请从 Actions run 的 artifacts 下载。
