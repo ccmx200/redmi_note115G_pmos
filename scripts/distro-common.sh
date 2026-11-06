@@ -137,6 +137,21 @@ AC
         systemctl enable systemd-networkd 2>/dev/null || true
         systemctl enable systemd-timesyncd 2>/dev/null || true
     '
+
+    # Snap: the images must ship snapd already installed and enabled, so
+    # "snap install snap-store" works on first boot without apt-get first.
+    log "preinstall snapd"
+    chroot "$R" /usr/bin/qemu-aarch64-static /bin/sh -c "
+        set -e
+        export DEBIAN_FRONTEND=noninteractive
+        APT=\"apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold\"
+        apt-get update
+        \$APT install --no-install-recommends snapd
+        systemctl enable snapd.socket snapd.service 2>/dev/null || true
+        apt-get clean
+        rm -rf /var/lib/apt/lists/*
+    "
+
     DESKTOP_APT_FLAGS="--no-install-recommends"
     case "${EVERGO_EDITION:-minimal}" in
     desktop|xfce|phosh)
