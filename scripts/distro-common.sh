@@ -169,6 +169,7 @@ AC
             # image; firefox/thunderbird are snap transition packages).
             log "desktop edition: full Ubuntu GNOME (ubuntu-desktop) + Chinese"
             PKGS="ubuntu-desktop \
+                  gnome-system-monitor upower power-profiles-daemon \
                   language-pack-zh-hans language-pack-gnome-zh-hans \
                   ibus ibus-libpinyin fonts-noto-cjk fonts-noto-color-emoji"
             DESKTOP_APT_FLAGS=""
