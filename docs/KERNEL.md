@@ -20,6 +20,7 @@
 | `7480c0a7` | **fuel-gauge 电压单位修正**（uV 结果被再乘 1000 导致 int 溢出） | ✅ |
 | `1a91f097` | **电池 OCV 表单位修正**（整表原来放大了 10 倍） | ✅ |
 | `320373f5` | **CPU/GPU 温控降频**：passive cooling（80/90/100°C），critical 115°C | ✅ |
+| `12717b45` | **LK mblock 保留**：补全基带/SCP/SPM/RKP 等固件内存，修复内存压力 panic | ✅ |
 
 `master` 当前 tip = **`1a91f097`**。
 
@@ -94,6 +95,17 @@ CPU/GPU DVFS 打开后，8 核满载可以一直维持 2.0 GHz；没有 cooling 
 - critical trip 从 117°C 降到 115°C。
 
 真机 5 分钟 8 核满载结果：温度稳定在 **~81°C**，max_freq 逐步从 2.0 → 1.916 → 1.812 → 1.75 GHz，系统持续存活（uptime 连续），不再挂死。
+
+
+## 内存压力 panic：根因与修复（12717b45）
+
+以前"内存用多了就随机 panic"（`pc=0` 软中断、slab refill NULL、Bad page map）的根因已经定位：
+
+- 内核用编译进 Image 的 DTB，丢掉了 **LK 启动时注入的 `/memory` + `/reserved-memory` mblock**；
+- LK 给基带（`ap_md_c_smem` 0x6c000000 等约 230 MB）、SCP 0xb9400000、SPM、RKP 0xd0000000 以及 framebuffer/MCUPM/TEE 保留的 DRAM 没有被 Linux 保留，固件和 Linux 同时使用 → 数据被踩；
+- 用 4.2 GiB 内存测试可以复现：修复前 47,308 个坏页，物理范围 0x6c000000..0xb52ff000（正好是基带 mblock）；补全 mblock 后 **0 坏页**。
+
+`mem=4G` 的临时规避不再需要。
 
 ## 验证计划（继续）
 

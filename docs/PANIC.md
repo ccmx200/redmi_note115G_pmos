@@ -182,3 +182,22 @@ Arch。现在 `KERNEL_ONLY=1` 会在 `rootfs` 段之前直接跳过所有发行�
   tag，要根治需要把整个 MT6833 port rebase 到更新的 mainline，或继续 backport
   具体修复。
 * 临时缓解可试 `mem=4G`/`mem=5G` 限制内存压力（构建脚本 BOOTARGS 加回即可）。
+
+
+## 2026-11：内存压力 panic 根因找到并修复（内核 12717b45）
+
+之前的结论是"内存压力大就 panic，mem=4G 会好一些"，但根因一直是未知。这次定位到了：
+
+**内核启动时使用编译进 Image 的 DTB（`CONFIG_EXTRA_FIRMWARE` + `setup.c` 覆盖），把 LK 在启动时补进 `/memory`、`/reserved-memory` 的信息全部丢掉了。**
+
+LK 真正在用的内存布局（通过 `early_memremap` 把 LK 传入的 DTB 拷出来、经 debug 分支的 `/proc/lk_dtb` 读出）里有一大批 **mblock**：
+
+- 基带：`ap_md_c_smem` 0x6c000000（42 MB）、`ap_md_nc_smem` 0x7a000000、`drdi_memory` 0x9a090000、`md_mem_usage` 0x98000000/0x9a510000/0x9b000000/0x9c000000/0xb3bd0000（共约 230 MB）、`ccci_tag_mem`；
+- `SCP-reserved` 0xb9400000、`SPM-reserved` 0x77ff0000、`RKP`/`RKP_NS` 0xd0000000/0xd0200000；
+- framebuffer、MCUPM、tee_ree、tee-secmem 的地址也和静态 vendor 模板不同。
+
+这些全都没有写进 evergo 的 `reserved-memory`，于是 Linux 把还在跑固件的 DRAM 当空闲内存分配出去，两边互相踩：写进去的数据变 0，压力一大就踩到 slab/定时器/页表 → `pc : 0x0`、`__refill_objects_node` NULL、`Bad page map`。
+
+用 `memtest4.py`（4.2 GiB 匿内存 + `/proc/self/pagemap`）可以稳定复现：修复前 **47,308 页坏**，物理地址范围 **0x6c000000..0xb52ff000，正好是基带 mblock 区间**；把 LK 的 mblock 全部补进 DTB（最新内核 `12717b45`）后，同一测试 **0 坏页**；90 秒 8 核满载、s2idle 进出、温控降频都正常。
+
+所以 `mem=4G` 只是降低命中概率的临时办法，**已不再需要**；发布镜像从 kernel `12717b45` 起使用完整 mblock 保留布局。
