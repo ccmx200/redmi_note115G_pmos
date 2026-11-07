@@ -56,7 +56,7 @@ fastboot reboot
 CI 的 `edition` 参数支持三种镜像：
 
 * `minimal`：最小系统（SSH + nmtui + WiFi + 触摸），最稳、最省内存；
-* `desktop`：**完整 Ubuntu 桌面**（`apt install ubuntu-desktop`，GNOME 全套应用 + 中文，自动登录 `evergo/evergo`，Snap 可用）；
+* `desktop`：**完整 Ubuntu 桌面**（`apt install ubuntu-desktop`，GNOME 全套应用 + 中文；**首次开机进入 GNOME Initial Setup 自建账号**，不预建用户、不自动登录；Snap 可用）；
 * `xfce`：**轻量桌面** XFCE + LightDM（内存占用明显低于 GNOME，适合这台内存不太稳的机器）。
 
 三者都带中文语言包/字体和 `zh_CN.UTF-8`。
@@ -65,7 +65,8 @@ CI 的 `edition` 参数支持三种镜像：
 
 CI 的 `edition=desktop` 会构建 **完整 Ubuntu 桌面 + 中文语言/输入法** 版本（`ubuntu-desktop`
 meta 包 + recommends，含 GNOME 全套应用；再加 `language-pack-zh-hans` +
-`fonts-noto-cjk` + `ibus-libpinyin`，自动创建 `evergo/evergo` 用户并开 GDM 自动登录）。
+`fonts-noto-cjk` + `ibus-libpinyin`）。**桌面镜像不预建账号**：首次开机由 GDM 启动
+GNOME Initial Setup，用户自己设置语言/账号/密码。
 内核已启用 squashfs 的 XZ/ZSTD/LZ4/LZO 解压，`snap install snap-store` 等可以直接使用。
 桌面 rootfs 约 12 GiB，**userdata 稀疏镜像超过 2 GiB，所以只放在
 workflow artifacts，不进 Release**；Release 里只有它的 `boot-*.img` 和小于 2 GiB 的镜像。
@@ -156,7 +157,7 @@ nmcli device wifi list
 | 文档 | 内容 |
 |:---|:---|
 | 📖 **[刷机与使用教程](docs/TUTORIAL.md)** | 下载、刷机、联网、首次登录、包管理、模式切换 |
-| 🖥️ **[桌面版镜像](docs/BUILDING.md)** | CI 可选 `edition=desktop`：完整 `ubuntu-desktop`（GNOME 全套应用 + 中文，Snap 可用） |
+| 🖥️ **[桌面版镜像](docs/BUILDING.md)** | CI 可选 `edition=desktop`：完整 `ubuntu-desktop`（GNOME 全套应用 + 中文，首次开机走 Initial Setup，Snap 可用） |
 | 🔌 **[硬件支持清单](docs/HARDWARE.md)** | 各硬件/虚拟化/PD/Snap 的支持状态与验证结果 |
 | 🛠️ **[构建指南](docs/BUILDING.md)** | 本地构建、CI、多发行版脚本、内核配置 |
 | 🩺 **[抓 panic 日志](docs/PANIC.md)** | 无串口时从 expdb 取回崩溃 trace |

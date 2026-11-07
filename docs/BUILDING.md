@@ -47,7 +47,8 @@ Fork 仓库 → **Actions** → 「build evergo images」→ **Run workflow**
 **桌面版（desktop）**：完整的 `apt install ubuntu-desktop`（保留 recommends，含 GNOME 全套应用：Nautilus、终端、设置中心、LibreOffice 等）+ 中文语言包、字体和 `ibus-libpinyin`。构建时用 apt pin 排除 snap 版 `firefox`/`thunderbird`（chroot 里 snapd 无法工作），镜像本身支持 snap。
 
 **轻量版（xfce）**：XFCE + LightDM 自动登录，不需要 GNOME，内存和磁盘占用都小；适合内存不稳定的机器。
-镜像里会自动建 `evergo/evergo` 用户并开启 GDM 自动登录。桌面 rootfs 约 10 GiB，
+**桌面镜像不预建用户**：首次开机 GDM 会启动 GNOME Initial Setup，由用户自行设置语言/账号/密码。
+桌面 rootfs 约 12 GiB，
 **userdata 稀疏镜像超过 2 GiB，因此只上传到 workflow artifacts，不进 Release**（Release 只放
 `boot-*.img` 和小于 2 GiB 的 userdata）。所有版本都带中文字体和 `zh_CN.UTF-8` locale。
 
@@ -458,8 +459,9 @@ CI 的 `build` job 会：
 ## 桌面版与中文
 
 * `edition=minimal`：现有最小镜像（SSH + nmtui + WiFi + 触摸），默认 6144 MiB rootfs。
-* `edition=desktop`：完整 Ubuntu 桌面。`build.sh` 里 `EDITION=desktop` 会自动把 rootfs 提到
-  12288 MiB，并在镜像里创建 `evergo/evergo` 用户、开 GDM 自动登录、默认 `graphical.target`；
+* `edition=desktop`：完整 Ubuntu 桌面。`build.sh` 里 `EDITION=desktop` 会把 rootfs 提到
+  12288 MiB、默认 `graphical.target`、并在内核 cmdline 加 `gnome.initial-setup=1`；
+  **不创建任何用户、不写 GDM 自动登录**，首次开机由 GDM 启动 GNOME Initial Setup；
   `scripts/distro-common.sh` 安装 `ubuntu-desktop`（带 recommends）、`language-pack-zh-hans`、
   `language-pack-gnome-zh-hans`、`ibus-libpinyin`。
 * **所有发行版**都加了中文字体（`fonts-noto-cjk` / `noto-fonts-cjk` /
