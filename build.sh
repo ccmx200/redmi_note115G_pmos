@@ -268,7 +268,7 @@ BOOTARGS = (
     # fbcon=nodefer is required: without it the kernel does not reach userspace on
     # this panel (the RNDIS gadget never enumerates).  It also means the Tux logo is
     # drawn before the DSI panel is up and is lost - a cosmetic trade we accept.
-    "fbcon=nodefer cma=256M"
+    "fbcon=nodefer cma=256M cfg80211.ieee80211_regdom=CN"
 )
 s, n = re.subn(r'bootargs = "[^"]*";', f'bootargs = "{BOOTARGS}";', s)
 if n != 1:
