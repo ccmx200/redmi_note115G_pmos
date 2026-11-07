@@ -165,7 +165,7 @@ ssh root@169.254.42.1          # 密码：evergo
 | 🧩 **Snap 安装失败（bad superblock）** | 内核补上 squashfs 的 XZ/ZSTD/LZ4/LZO 解压，`snap install snap-store` 等现在可以正常挂载安装 |
 | 🔊 **音量键反向** | 修正 PMIC home-key/键盘矩阵映射，音量加、减方向正确 |
 | 🧮 **CPU 显示成 6 核** | cpu-map 合并为一个 MC 域，lscpu/系统监视器显示 8 物理核 + 8 逻辑核，`capacity-dmips-mhz` 仍标记 cpu6/cpu7 为大核 |
-| 📦 **Snap 预装** | Ubuntu/Debian 镜像预装并启用 snapd，首次开机即可 `snap install snap-store`；squashfs XZ/ZSTD/LZ4/LZO 已开启 |
+| 📦 **Snap 预装** | Ubuntu/Debian 镜像预装 snapd 并自动解除 ubuntu-base 的 mask、启用 socket/service，首次开机即可 `snap install snap-store`；squashfs XZ/ZSTD/LZ4/LZO 已开启 |
 | 🔌 **USB PD** | 补上 MT6360 TCPC 节点（GPIO9 = PD_IRQB，5 V/9 V sink PDO），Type-C/PD 协商启用（PD 充电器实测待验证） |
 | 🖥️ **虚拟化** | KVM 已启用（EL2/VHE、`/dev/kvm`、vhost-net），可跑 qemu/libvirt 虚拟机 |
 | ⚡ **性能调优** | zram 改 lz4；swappiness=100/page-cluster=0；UFS 调度器 none；dirty ratio 收紧；温控 passive 阈值提高到 85/95/105 °C |

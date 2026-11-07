@@ -412,6 +412,15 @@ echo "  handled by scripts/distro-$DISTRO.sh"
 
 say "rootfs: apply the evergo overlay"
 tar xzf "$HERE/rootfs-overlay.tar.gz" -C "$R" --numeric-owner
+# snapd must be usable, not masked like in the container-friendly base image
+if [ -e "$R/usr/lib/systemd/system/snapd.service" ]; then
+    if [ "$(readlink -f "$R/etc/systemd/system/snapd.service" 2>/dev/null)" = "/dev/null" ]; then
+        echo "  !! snapd.service is masked in the image"; exit 1
+    fi
+    if [ ! -e "$R/etc/systemd/system/sockets.target.wants/snapd.socket" ]; then
+        echo "  !! snapd.socket is not enabled in the image"; exit 1
+    fi
+fi
 chmod 755 "$R"/usr/local/bin/* 2>/dev/null || true
 chmod 644 "$R/etc/profile.d/00-evergo-welcome.sh" "$R/etc/evergo/fastfetch.jsonc" 2>/dev/null || true
 

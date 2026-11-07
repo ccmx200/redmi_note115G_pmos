@@ -147,7 +147,14 @@ AC
         APT=\"apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold\"
         apt-get update
         \$APT install --no-install-recommends snapd
+        # ubuntu-base ships snapd masked (container-friendly).  The phone image
+        # must boot with a usable snapd, so unmask and enable it explicitly.
+        systemctl unmask snapd.service snapd.socket 2>/dev/null || true
+        rm -f /etc/systemd/system/snapd.service /etc/systemd/system/snapd.socket
         systemctl enable snapd.socket snapd.service 2>/dev/null || true
+        mkdir -p /etc/systemd/system/sockets.target.wants /etc/systemd/system/multi-user.target.wants
+        ln -sf /usr/lib/systemd/system/snapd.socket /etc/systemd/system/sockets.target.wants/snapd.socket
+        ln -sf /usr/lib/systemd/system/snapd.service /etc/systemd/system/multi-user.target.wants/snapd.service
         apt-get clean
         rm -rf /var/lib/apt/lists/*
     "
