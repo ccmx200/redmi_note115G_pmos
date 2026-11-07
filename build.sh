@@ -201,9 +201,9 @@ grep -q '^CONFIG_INITRAMFS_COMPRESSION_GZIP' "$KOUT/.config" || \
 
 say "adapt the device tree (RAM $RAM_GIB GiB, panel $PANEL, high-speed USB)"
 DTS="$L/arch/arm64/boot/dts/mediatek/mt6833-xiaomi-evergo.dts"
-python3 - "$DTS" "$RAM_GIB" "$PANEL" <<'PY'
+python3 - "$DTS" "$RAM_GIB" "$PANEL" "$EDITION" <<'PY'
 import re, sys
-dts, gib, panel = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+dts, gib, panel, edition = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4]
 s = open(dts).read()
 
 # memory: the author's tree hardcodes 8 GiB for their own unit
@@ -270,6 +270,10 @@ BOOTARGS = (
     # drawn before the DSI panel is up and is lost - a cosmetic trade we accept.
     "fbcon=nodefer cma=256M cfg80211.ieee80211_regdom=CN"
 )
+# The desktop image ships no user account: GDM must run gnome-initial-setup on
+# the first boot so the user configures everything themselves.
+if edition == "desktop":
+    BOOTARGS += " gnome.initial-setup=1"
 s, n = re.subn(r'bootargs = "[^"]*";', f'bootargs = "{BOOTARGS}";', s)
 if n != 1:
     raise SystemExit(f"expected 1 bootargs node, replaced {n}")
@@ -535,20 +539,23 @@ if [ -e "$R/usr/lib/systemd/systemd" ]; then
     fi
 fi
 
-# Desktop editions (GNOME or XFCE) need a normal user (both display managers
-# refuse root) and an autologin so the phone boots straight into the session.
+# xfce/phosh need a normal user and autologin; the desktop edition must NOT
+# create a user (GNOME Initial Setup does that on first boot).
 if [ "$EDITION" != minimal ]; then
-    say "rootfs: desktop user + $EDITION autologin"
-    python3 - "$R" <<'PYDESK'
+    say "rootfs: $EDITION user/autologin handling"
+    python3 - "$R" "$EDITION" <<'PYDESK'
 import os, subprocess, sys, shutil
 
 R = sys.argv[1]
+edition = sys.argv[2]
 pw = os.path.join(R, 'etc/passwd')
 shadow = os.path.join(R, 'etc/shadow')
 group = os.path.join(R, 'etc/group')
 home = os.path.join(R, 'home/evergo')
 
-if 'evergo:' not in open(pw).read():
+# xfce/phosh keep the pre-created evergo user; desktop must start with no
+# account so GDM launches gnome-initial-setup and the user configures it.
+if edition != 'desktop' and 'evergo:' not in open(pw).read():
     h = subprocess.run(['openssl', 'passwd', '-6', 'evergo'],
                        capture_output=True, text=True).stdout.strip()
     open(pw, 'a').write('evergo:x:1000:1000:Evergo:/home/evergo:/bin/bash\n')
@@ -595,10 +602,9 @@ PYDESK
 
     mkdir -p "$R/etc/systemd/system"
     if [ "$EDITION" = desktop ]; then
-        # GNOME: gdm3 autologin
-        mkdir -p "$R/etc/gdm3"
-        printf '[daemon]\nAutomaticLoginEnable=True\nAutomaticLogin=evergo\n' \
-            > "$R/etc/gdm3/custom.conf"
+        # No autologin: GDM runs gnome-initial-setup on the first boot
+        # (gnome.initial-setup=1 on the kernel command line) and the user
+        # creates their own account there.
         for dm in /usr/lib/systemd/system/gdm3.service \
                   /lib/systemd/system/gdm3.service \
                   /usr/lib/systemd/system/gdm.service; do
