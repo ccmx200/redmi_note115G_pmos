@@ -171,6 +171,7 @@ ssh root@169.254.42.1          # 密码：evergo
 | ⚡ **性能调优** | zram 改 lz4；swappiness=100/page-cluster=0；UFS 调度器 none；dirty ratio 收紧；温控 passive 阈值提高到 85/95/105 °C |
 | 🌡️ **GPU 温控绑定（已回滚）** | 修正 cooling map 后能绑定，但该板会在内核早期卡死、不进系统；已回退为原状态（只有一条无害警告，GPU 仍由 SOC 冷却映射降频） |
 | 📶 **WiFi 法规域** | 内核启动参数 `cfg80211.ieee80211_regdom=CN`：修正此前 regulatory.db 加载失败导致的 country 00（5 GHz 可用信道/功率受限） |
+| ⚡ **CPU 大核 2.4 GHz** | 放开 VPROC/VSRAM 电压上限并补 2118/2203/2306/2400 MHz OPP；短时爆发可到 2.4 GHz（满载受 85 °C 温控回落到 ~2.0 GHz） |
 | 🧠 **内存压力随机 panic** | 根因是内嵌 DTB 丢掉了 LK 启动时保留的基带/SCP/RKP 等 mblock，Linux 把固件内存当空闲内存用；内核 12717b45 补全 LK mblock 保留后，4.2 GiB 内存压力测试 0 坏页 |
 | 🌡️ **满载过热挂死** | 新增 CPU/GPU 温控降频：80/90/100°C 逐级降频、critical 115°C；5 分钟 8 核满载温度稳定在 ~81°C，不再挂死 |
 | 🔋 **电池电压/容量错误** | fuel-gauge 原来读 MT6359 阻抗通道（负电压）、电压单位又溢出、OCV 表放大 10 倍；改读 MT6360 ADC VBAT 并修正单位/表后，电压、百分比、charge_now 都正确 |
