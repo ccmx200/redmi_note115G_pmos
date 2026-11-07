@@ -169,6 +169,7 @@ ssh root@169.254.42.1          # 密码：evergo
 | 🔌 **USB PD** | 补上 MT6360 TCPC 节点（GPIO9 = PD_IRQB，5 V/9 V sink PDO），Type-C/PD 协商启用（PD 充电器实测待验证） |
 | 🖥️ **虚拟化** | KVM 已启用（EL2/VHE、`/dev/kvm`、vhost-net），可跑 qemu/libvirt 虚拟机 |
 | ⚡ **性能调优** | zram 改 lz4；swappiness=100/page-cluster=0；UFS 调度器 none；dirty ratio 收紧；温控 passive 阈值提高到 85/95/105 °C |
+| 🌡️ **GPU 温控绑定** | 修正 GPU cooling map 的 state 上限（7→6），消除 `thermal_zone6/7 binding cdev ... failed -22`，GPU 区温控真正生效 |
 | 🧠 **内存压力随机 panic** | 根因是内嵌 DTB 丢掉了 LK 启动时保留的基带/SCP/RKP 等 mblock，Linux 把固件内存当空闲内存用；内核 12717b45 补全 LK mblock 保留后，4.2 GiB 内存压力测试 0 坏页 |
 | 🌡️ **满载过热挂死** | 新增 CPU/GPU 温控降频：80/90/100°C 逐级降频、critical 115°C；5 分钟 8 核满载温度稳定在 ~81°C，不再挂死 |
 | 🔋 **电池电压/容量错误** | fuel-gauge 原来读 MT6359 阻抗通道（负电压）、电压单位又溢出、OCV 表放大 10 倍；改读 MT6360 ADC VBAT 并修正单位/表后，电压、百分比、charge_now 都正确 |
