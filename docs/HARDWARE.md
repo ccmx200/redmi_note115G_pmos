@@ -20,7 +20,7 @@
 | 手电筒 / 闪光灯 | ✅ | MT6360 白闪 LED（`/sys/class/leds/white:flash-1`）；镜像内 `evergo-torch on/off/toggle/strobe/status` 可用 |
 | RTC | ✅ | MT6359 RTC；开机/关机与定时保存，时间不丢 |
 | 温度传感器/温控 | ✅ | MT6833 LVTS：13 个热区；CPU/GPU/SOC 带 passive cooling（80/90/100°C 降频），critical 115°C |
-| CPU / GPU 调频 | ✅ | CPU 小核 950 MHz–2.0 GHz；大核 725 MHz–**2.4 GHz**（B24G bin，短时爆发，满载受 85 °C 温控回落 ~2.0 GHz）；GPU 390–**1000 MHz**；s2idle 正常 |
+| CPU / GPU 调频 | ✅ | CPU 小核 950 MHz–2.0 GHz；大核 725 MHz–**2.4 GHz**（B24G bin，短时爆发，满载受 85 °C 温控回落 ~2.0 GHz）；GPU 390–**1068 MHz**；s2idle 正常 |
 | CPU idle（PSCI） | 🚧 | 实验分支 `cpuidle-exp`：状态生效但压力/休眠下会挂，未合并，见 [KERNEL](KERNEL.md) |
 | 休眠 s2idle | 🟡 | 已验证可进/出（DVFS 同时启用也正常），resume 后显示/触摸/调频恢复；默认不自动休眠 |
 | 传感器 | 🟡 | AK09918 / TSL2522 / LSM6DSO 由 SCP RISC-V 传感器 hub 独占，主线无驱动 |

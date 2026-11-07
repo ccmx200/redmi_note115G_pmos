@@ -174,6 +174,7 @@ ssh root@169.254.42.1          # 密码：evergo
 | ⚡ **CPU 大核 2.4 GHz** | 放开 VPROC/VSRAM 电压上限并补 2118/2203/2306/2400 MHz OPP；短时爆发可到 2.4 GHz（满载受 85 °C 温控回落到 ~2.0 GHz） |
 | 🎮 **GPU 950 MHz** | 新增 950 MHz OPP（sign-off 上限）：880 MHz 21.5 fps → 950 MHz 23.2 fps（+8%），20 s 满载稳定 |
 | 🎮 **GPU 1000 MHz** | 新增 1000 MHz OPP（800 mV，sign-off）：GPU 基准 880 MHz 21.5 fps → 950 23.2 → 1000 24.4 fps（+13.5%），20 s 满载稳定、42 °C |
+| 🎮 **GPU 1068 MHz** | 新增 1068 MHz OPP（850 mV，厂商 sign-off 上限）：GPU 基准 880 MHz 21.5 → 1000 24.4 → **1068 26.0 fps**（+21%），20 s 满载 42 °C 稳定 |
 | 🧠 **内存压力随机 panic** | 根因是内嵌 DTB 丢掉了 LK 启动时保留的基带/SCP/RKP 等 mblock，Linux 把固件内存当空闲内存用；内核 12717b45 补全 LK mblock 保留后，4.2 GiB 内存压力测试 0 坏页 |
 | 🌡️ **满载过热挂死** | 新增 CPU/GPU 温控降频：80/90/100°C 逐级降频、critical 115°C；5 分钟 8 核满载温度稳定在 ~81°C，不再挂死 |
 | 🔋 **电池电压/容量错误** | fuel-gauge 原来读 MT6359 阻抗通道（负电压）、电压单位又溢出、OCV 表放大 10 倍；改读 MT6360 ADC VBAT 并修正单位/表后，电压、百分比、charge_now 都正确 |
